@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .planner import build_daily_network_plan, write_video_packages
-from .renderer import render_video_dirs
+from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render_video_dirs
 from .sample_data import SAMPLE_TRENDS
 from .sources import collect_live_trends
 from .status_store import StatusStore
@@ -23,7 +23,8 @@ def run_daily(
     channel_name: str,
     render: bool = False,
     upload: bool = False,
-    tts_provider: str = "mock",
+    tts_provider: str = "elevenlabs",
+    quick_preview: bool = False,
 ) -> dict:
     trends = SAMPLE_TRENDS if sample else collect_live_trends(region=region, limit=limit)
     plan = build_daily_network_plan(trends=trends, channel_name=channel_name, top_n=top_n)
@@ -39,7 +40,11 @@ def run_daily(
 
     render_result = None
     if render:
-        render_result = render_video_dirs(package_dirs)
+        render_result = render_video_dirs(
+            package_dirs,
+            duration_seconds=PREVIEW_DURATION_SECONDS if quick_preview else DEFAULT_DURATION_SECONDS,
+            preview=quick_preview,
+        )
 
     upload_result = {
         "enabled": upload,
@@ -57,8 +62,10 @@ def run_daily(
         "video_files_written": len(written_video_files),
         "tts": tts_result,
         "render_requested": render,
+        "quick_preview": quick_preview,
         "mp4_rendered": render_result["rendered_count"] if render_result else 0,
         "final_mp4_paths": render_result["outputs"] if render_result else [],
+        "thumbnail_paths": render_result["thumbnails"] if render_result else [],
         "render_warnings": render_result["warnings"] if render_result else [],
         "upload": upload_result,
         "mode": "sample" if sample else "live",

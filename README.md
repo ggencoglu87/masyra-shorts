@@ -68,9 +68,11 @@ Mevcut surum her trend icin su dosyalari hazirlar:
 - `video-plan.json`
 - `upload-metadata.json`
 
-FFmpeg varsa sistem her paket icin gercek `final.mp4` uretir. FFmpeg yoksa script, voiceover, altyazi ve metadata uretimi devam eder; summary icinde net uyari doner. TTS yoksa `voiceover.txt` korunur.
+FFmpeg varsa sistem her paket icin gercek `final.mp4` uretir. Varsayilan final video suresi 25 saniyedir. `--quick-preview` modu 15 saniyelik daha dusuk cozunurluklu `preview.mp4` uretir. FFmpeg yoksa script, voiceover, altyazi ve metadata uretimi devam eder; summary icinde net uyari doner.
 
-Dashboard ile her gunluk trend/video paketini inceleyebilir, `Needs Edit`, `Approved`, `Rejected` statuslerinden birini verebilirsin. Statusler `outputs/review-status.json` dosyasinda saklanir.
+ElevenLabs varsayilan TTS provider'dir. `ELEVENLABS_API_KEY` varsa `voiceover.mp3` uretilir ve FFmpeg render bunu final/preview videoya gomar. API key yoksa sistem mock fallback ile `voiceover.txt` uretmeye devam eder.
+
+Dashboard ile her gunluk trend/video paketini thumbnail, preview/final video, script ve checklist ile inceleyebilir, `Needs Edit`, `Approved`, `Rejected` statuslerinden birini verebilirsin. Statusler `outputs/review-status.json` dosyasinda saklanir.
 
 ## Kurulum
 
@@ -113,7 +115,7 @@ TREND_REGION_CODE=US
 TREND_SOURCE_LIMIT=50
 TREND_TOP_N=10
 SHORTS_OUTPUT_DIR=outputs
-TTS_PROVIDER=mock
+TTS_PROVIDER=elevenlabs
 ELEVENLABS_API_KEY=
 ELEVENLABS_VOICE_ID=JBFqnCBsd6RMkjVDRZzb
 ELEVENLABS_MODEL_ID=eleven_multilingual_v2
@@ -135,10 +137,16 @@ Ornek veriyle rapor, paketler ve FFmpeg varsa MP4 render:
 py -m shorts_automation.cli daily-run --sample --render
 ```
 
-Mock TTS ile paket uretimi. Bu mod ses dosyasi uretmez, ama TTS adimini test eder:
+15 saniyelik hizli preview render:
 
 ```powershell
-py -m shorts_automation.cli daily-run --sample --tts-provider mock --render
+py -m shorts_automation.cli daily-run --sample --render --quick-preview
+```
+
+ElevenLabs varsayilan TTS provider'dir. API key yoksa mock fallback devreye girer ve ses dosyasi uretmez:
+
+```powershell
+py -m shorts_automation.cli daily-run --sample --render
 ```
 
 ElevenLabs ile `voiceover.mp3` uretmek:
@@ -170,6 +178,12 @@ Tek video paketini render etmek:
 
 ```powershell
 py -m shorts_automation.cli render-video outputs\2026-06-09\videos\01-example
+```
+
+Tek video paketini preview olarak render etmek:
+
+```powershell
+py -m shorts_automation.cli render-video outputs\2026-06-09\videos\01-example --quick-preview
 ```
 
 Ornek tek video paketi uretmek ve render etmek:
@@ -220,6 +234,9 @@ Her gun icin `outputs/YYYY-MM-DD/` altinda:
 - `daily-run-summary.json`
 - `videos/01-.../` ile baslayan 10 video paketi
 - `videos/01-.../final.mp4` FFmpeg varsa uretilen final video
+- `videos/01-.../preview.mp4` quick-preview modunda uretilen hizli onizleme
+- `videos/01-.../thumbnail.jpg`
+- `videos/01-.../preview-thumbnail.jpg`
 - `videos/01-.../voiceover.mp3` ElevenLabs TTS basariliysa uretilen ses
 - `videos/01-.../asset-prompts.json`
 - `videos/01-.../copyright-checklist.json`

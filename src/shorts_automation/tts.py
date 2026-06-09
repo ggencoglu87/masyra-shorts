@@ -20,6 +20,9 @@ class TTSProvider:
 class MockTTSProvider(TTSProvider):
     name = "mock"
 
+    def __init__(self, reason: str = "Mock TTS does not create audio. voiceover.txt remains the source of truth.") -> None:
+        self.reason = reason
+
     def synthesize(self, text: str, output_path: Path) -> dict:
         status_path = output_path.with_suffix(".mock.json")
         status_path.write_text(
@@ -27,7 +30,7 @@ class MockTTSProvider(TTSProvider):
                 {
                     "provider": self.name,
                     "audio_created": False,
-                    "warning": "Mock TTS does not create audio. voiceover.txt remains the source of truth.",
+                    "warning": self.reason,
                     "text_preview": text[:240],
                 },
                 ensure_ascii=False,
@@ -39,7 +42,7 @@ class MockTTSProvider(TTSProvider):
             "provider": self.name,
             "created": False,
             "output": None,
-            "warning": "Mock TTS selected; no voiceover.mp3 created.",
+            "warning": self.reason,
         }
 
 
@@ -95,7 +98,7 @@ def get_tts_provider(name: str) -> TTSProvider | None:
     if normalized == "elevenlabs":
         api_key = os.getenv("ELEVENLABS_API_KEY")
         if not api_key:
-            return MockTTSProvider()
+            return MockTTSProvider("ELEVENLABS_API_KEY is missing; no voiceover.mp3 created.")
         return ElevenLabsTTSProvider(api_key=api_key)
     raise ValueError(f"Unknown TTS provider: {name}")
 

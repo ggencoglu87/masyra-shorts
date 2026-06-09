@@ -97,9 +97,11 @@ def render_index(output_dir: Path, store: StatusStore) -> str:
         scores = plan.get("scores", {})
         status = store.get(video_dir)["status"]
         detail_url = "/video?dir=" + urllib.parse.quote(str(video_dir.relative_to(output_dir)))
+        thumb = _thumbnail_html(output_dir, video_dir)
         rows.append(
             f"""
             <tr>
+              <td>{thumb}</td>
               <td><a href="{detail_url}">{_e(trend.get("title", video_dir.name))}</a></td>
               <td>{_e(trend.get("category", ""))}</td>
               <td>{_e(status)}</td>
@@ -122,7 +124,7 @@ def render_index(output_dir: Path, store: StatusStore) -> str:
         </section>
         <table>
           <thead>
-            <tr><th>Trend</th><th>Category</th><th>Status</th><th>Trend</th><th>Growth</th><th>Competition</th><th>Viral</th></tr>
+            <tr><th>Preview</th><th>Trend</th><th>Category</th><th>Status</th><th>Trend</th><th>Growth</th><th>Competition</th><th>Viral</th></tr>
           </thead>
           <tbody>{''.join(rows)}</tbody>
         </table>
@@ -137,14 +139,11 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     prompts = _read_json(video_dir / "asset-prompts.json")
     status_data = store.get(video_dir)
     final_mp4 = video_dir / "final.mp4"
+    preview_mp4 = video_dir / "preview.mp4"
     voiceover_mp3 = video_dir / "voiceover.mp3"
     rel = str(video_dir.relative_to(output_dir))
-    final_media = ""
-    if final_mp4.exists():
-        media_url = "/media?path=" + urllib.parse.quote(str(final_mp4.relative_to(output_dir)))
-        final_media = f'<video controls src="{media_url}"></video>'
-    else:
-        final_media = '<div class="missing">No final.mp4 yet</div>'
+    preview_media = _video_html(output_dir, preview_mp4, "No preview.mp4 yet")
+    final_media = _video_html(output_dir, final_mp4, "No final.mp4 yet")
 
     return page(
         plan.get("title", "Video package"),
@@ -170,7 +169,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
             </form>
           </section>
         </div>
-        <section><h2>Final MP4</h2>{final_media}</section>
+        <section><h2>Video Preview</h2><div class="media-row"><div><h3>Quick Preview</h3>{preview_media}</div><div><h3>Final MP4</h3>{final_media}</div></div></section>
         <section><h2>Script</h2><pre>{_e(_read_text(video_dir / "script.txt"))}</pre></section>
         <section><h2>Subtitles</h2><pre>{_e(_read_text(video_dir / "subtitles.srt"))}</pre></section>
         <section><h2>Render Brief</h2><pre>{_e(_read_text(video_dir / "render-brief.txt"))}</pre></section>
@@ -220,8 +219,11 @@ def page(title: str, body: str) -> str:
         select, button {{ padding: 10px 12px; }}
         button {{ background: #18212f; color: white; border: 0; border-radius: 6px; cursor: pointer; }}
         video {{ width: min(360px, 100%); aspect-ratio: 9 / 16; background: #111; }}
+        .thumb {{ width: 72px; aspect-ratio: 9 / 16; object-fit: cover; border-radius: 6px; background: #17202a; }}
+        .media-row {{ display: grid; grid-template-columns: repeat(2, minmax(0, 360px)); gap: 18px; align-items: start; }}
+        h3 {{ font-size: 15px; margin: 0 0 10px; }}
         .missing {{ padding: 28px; border: 1px dashed #b7c3d0; border-radius: 8px; color: #576575; }}
-        @media (max-width: 800px) {{ .grid {{ grid-template-columns: 1fr; }} }}
+        @media (max-width: 800px) {{ .grid, .media-row {{ grid-template-columns: 1fr; }} }}
       </style>
     </head>
     <body>{body}</body>
@@ -241,6 +243,27 @@ def _safe_media_path(output_dir: Path, value: str) -> Path | None:
     if not str(path).startswith(str(output_dir)) or not path.exists():
         return None
     return path
+
+
+def _thumbnail_html(output_dir: Path, video_dir: Path) -> str:
+    for name in ["thumbnail.jpg", "preview-thumbnail.jpg"]:
+        path = video_dir / name
+        if path.exists():
+            media_url = "/media?path=" + urllib.parse.quote(str(path.relative_to(output_dir)))
+            return f'<img class="thumb" src="{media_url}" alt="thumbnail">'
+    return '<div class="thumb"></div>'
+
+
+def _video_html(output_dir: Path, path: Path, missing_text: str) -> str:
+    if not path.exists():
+        return f'<div class="missing">{_e(missing_text)}</div>'
+    media_url = "/media?path=" + urllib.parse.quote(str(path.relative_to(output_dir)))
+    poster = ""
+    poster_path = path.parent / ("preview-thumbnail.jpg" if path.name == "preview.mp4" else "thumbnail.jpg")
+    if poster_path.exists():
+        poster_url = "/media?path=" + urllib.parse.quote(str(poster_path.relative_to(output_dir)))
+        poster = f' poster="{poster_url}"'
+    return f'<video controls preload="metadata"{poster} src="{media_url}"></video>'
 
 
 def _read_json(path: Path) -> dict:

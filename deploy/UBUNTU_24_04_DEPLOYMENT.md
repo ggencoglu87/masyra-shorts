@@ -63,7 +63,7 @@ TREND_REGION_CODE=US
 TREND_SOURCE_LIMIT=50
 TREND_TOP_N=10
 SHORTS_OUTPUT_DIR=outputs
-TTS_PROVIDER=mock
+TTS_PROVIDER=elevenlabs
 ELEVENLABS_API_KEY=
 ELEVENLABS_VOICE_ID=JBFqnCBsd6RMkjVDRZzb
 ELEVENLABS_MODEL_ID=eleven_multilingual_v2
@@ -195,6 +195,8 @@ curl -I https://app.masyralabs.com
 ```
 
 The `app.masyralabs.com` request should require basic auth.
+
+`app.masyralabs.com` is the review dashboard. Keep it behind basic auth; do not expose port `8765` publicly in the firewall.
 
 ## Copy/Paste Full VPS Command Block
 

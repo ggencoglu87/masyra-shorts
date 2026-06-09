@@ -12,4 +12,4 @@ if [[ -f "${APP_DIR}/.env" ]]; then
   set +a
 fi
 
-exec "${APP_DIR}/.venv/bin/python" -m shorts_automation.cli daily-run --render --tts-provider "${TTS_PROVIDER:-mock}"
+exec "${APP_DIR}/.venv/bin/python" -m shorts_automation.cli daily-run --render --tts-provider "${TTS_PROVIDER:-elevenlabs}"
