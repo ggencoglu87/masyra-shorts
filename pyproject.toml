@@ -1,0 +1,15 @@
+[project]
+name = "shorts-trend-automation"
+version = "0.1.0"
+description = "Daily YouTube Shorts trend tracker and content planning automation."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+shorts-trends = "shorts_automation.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

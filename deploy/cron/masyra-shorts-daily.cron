@@ -1,0 +1,8 @@
+# Masyra Labs daily trend generation at 03:00 server time.
+# Install with:
+# sudo cp deploy/cron/masyra-shorts-daily.cron /etc/cron.d/masyra-shorts-daily
+# sudo chmod 0644 /etc/cron.d/masyra-shorts-daily
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+0 3 * * * www-data APP_DIR=/opt/masyra-shorts /opt/masyra-shorts/scripts/daily-run.sh >> /opt/masyra-shorts/outputs/cron.log 2>&1

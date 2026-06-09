@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Masyra Labs</title>
+  <meta name="description" content="Masyra Labs builds trend-following Shorts systems and original viral video workflows.">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #071018;
+      --panel: #0f1c27;
+      --ink: #f4f8fb;
+      --muted: #a9b8c7;
+      --accent: #35d0b4;
+      --line: #254052;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      background: radial-gradient(circle at 20% 20%, #15344a, transparent 34%), var(--bg);
+      color: var(--ink);
+    }
+    main {
+      min-height: 100vh;
+      display: grid;
+      align-content: center;
+      padding: 48px 24px;
+    }
+    .wrap {
+      width: min(1040px, 100%);
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: clamp(48px, 8vw, 104px);
+      line-height: .92;
+      margin: 0 0 24px;
+      letter-spacing: 0;
+    }
+    p {
+      max-width: 760px;
+      font-size: 21px;
+      line-height: 1.55;
+      color: var(--muted);
+      margin: 0 0 34px;
+    }
+    .signals {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 48px;
+    }
+    .signal {
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel), transparent 10%);
+      border-radius: 8px;
+      padding: 18px;
+    }
+    .signal b {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--accent);
+    }
+    .signal span {
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    @media (max-width: 760px) {
+      .signals { grid-template-columns: 1fr; }
+      p { font-size: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="wrap">
+      <h1>Masyra Labs</h1>
+      <p>Trend-following Shorts systems for finding viral signals, generating original video packages, and reviewing every asset before publication.</p>
+      <div class="signals">
+        <div class="signal"><b>Trend Radar</b><span>YouTube, Google Trends, Reddit, and search signals ranked for Shorts potential.</span></div>
+        <div class="signal"><b>Original Production</b><span>Scripts, voiceover text, subtitles, visual prompts, and safety checks for each trend.</span></div>
+        <div class="signal"><b>Human Review</b><span>Dashboard approval flow keeps publishing gated and intentional.</span></div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

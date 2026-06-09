@@ -1,0 +1,20 @@
+[Unit]
+Description=Masyra Labs Shorts Review Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/masyra-shorts
+Environment=APP_DIR=/opt/masyra-shorts
+Environment=DASHBOARD_HOST=127.0.0.1
+Environment=DASHBOARD_PORT=8765
+ExecStart=/opt/masyra-shorts/scripts/start-dashboard.sh
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
