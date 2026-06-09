@@ -77,7 +77,9 @@ Sistem her paket icin `asset-prompts.json` uretir. Render istenirse once bu prom
 
 FFmpeg varsa sistem sahne gorsellerinden Ken Burns zoom/pan hareketli temiz dikey Shorts videolari uretir. Varsayilan final video suresi 25 saniyedir. Her sahne 2-4 saniye gosterilir, altyazilar yalnizca altta yer alir, sahne gorsellerinin ustune baslik/metin bloklari basilmaz. `--render` artik otomatik olarak 12 saniyelik `preview.mp4` ve `thumbnail.jpg` da uretir. `--preview-only` yalnizca hizli preview ve thumbnail uretir. FFmpeg yoksa script, voiceover, altyazi, metadata ve sahne gorselleri uretimi devam eder; summary icinde net uyari doner.
 
-ElevenLabs varsayilan TTS provider'dir. `ELEVENLABS_API_KEY` varsa `voiceover.mp3` uretilir ve FFmpeg render bunu final/preview videoya gomar. API key yoksa sistem mock fallback ile `voiceover.txt` uretmeye devam eder.
+ElevenLabs varsayilan TTS provider'dir. `ELEVENLABS_API_KEY` varsa `voiceover.mp3` uretilir ve FFmpeg render bunu final/preview videoya gomar. API key yoksa ElevenLabs cagrisi yapilmaz; sistem `voiceover.txt` ile devam eder ve `tts-result.json` icinde net uyari yazar.
+
+Her TTS denemesi paket icinde `tts-result.json` dosyasina yazilir. `voiceover.mp3` zaten varsa sistem varsayilan olarak yeniden uretmez; yeniden uretmek icin `--force` veya render sirasinda `--force-tts` gerekir.
 
 Dashboard ile her gunluk trend/video paketini thumbnail, preview/final video, sahne timeline'i, script ve checklist ile inceleyebilir, `Needs Edit`, `Approved`, `Rejected` statuslerinden birini verebilirsin. Detay sayfasinda `Generate Visuals` promptlardan sahne gorselleri uretir, `Re-render Video` mevcut sahnelerle preview/final videoyu yeniden render eder. Statusler `outputs/review-status.json` dosyasinda saklanir.
 
@@ -183,7 +185,7 @@ Yalnizca preview ve thumbnail uretmek:
 py -m shorts_automation.cli daily-run --sample --render --preview-only
 ```
 
-ElevenLabs varsayilan TTS provider'dir. API key yoksa mock fallback devreye girer ve ses dosyasi uretmez:
+ElevenLabs varsayilan TTS provider'dir. API key yoksa ElevenLabs cagrisi yapilmaz ve ses dosyasi uretmez:
 
 ```powershell
 py -m shorts_automation.cli daily-run --sample --render
@@ -196,10 +198,34 @@ $env:ELEVENLABS_API_KEY="your_key_here"
 py -m shorts_automation.cli daily-run --sample --tts-provider elevenlabs --render
 ```
 
-Var olan video paketleri icin TTS calistirmak:
+Tek video paketi icin TTS calistirmak:
 
 ```powershell
-py -m shorts_automation.cli generate-tts outputs\2026-06-09\videos --tts-provider elevenlabs
+py -m shorts_automation.cli generate-tts outputs\2026-06-09\videos\01-example --tts-provider elevenlabs
+```
+
+Var olan `voiceover.mp3` dosyasini yeniden uretmek:
+
+```powershell
+py -m shorts_automation.cli generate-tts outputs\2026-06-09\videos\01-example --tts-provider elevenlabs --force
+```
+
+Tum video paketleri icin TTS calistirmak:
+
+```powershell
+py -m shorts_automation.cli generate-tts-all outputs\2026-06-09\videos --tts-provider elevenlabs
+```
+
+Mock provider ile API key olmadan TTS workflow test etmek:
+
+```powershell
+py -m shorts_automation.cli generate-tts outputs\2026-06-09\videos\01-example --tts-provider mock
+```
+
+Render oncesi TTS uretmeyi denemek ve varsa sesi videoya gommek:
+
+```powershell
+py -m shorts_automation.cli render-video outputs\2026-06-09\videos\01-example --with-audio --tts-provider elevenlabs
 ```
 
 Var olan tek paket icin sahne gorselleri uretmek:
@@ -292,6 +318,7 @@ Her gun icin `outputs/YYYY-MM-DD/` altinda:
 - `videos/01-.../scene-manifest.json`
 - `videos/01-.../scene-images/scene-01.png` ile baslayan 4-8 sahne gorseli
 - `videos/01-.../voiceover.mp3` ElevenLabs TTS basariliysa uretilen ses
+- `videos/01-.../tts-result.json`
 - `videos/01-.../asset-prompts.json`
 - `videos/01-.../copyright-checklist.json`
 - `review-status.json`

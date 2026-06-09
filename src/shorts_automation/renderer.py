@@ -88,7 +88,7 @@ def render_video_package(
             f"color=c={_background_color(category)}:s={width}x{height}:r={FPS}:d={duration_seconds}",
         ]
         if voiceover_path.exists():
-            command.extend(["-i", str(voiceover_path), "-shortest"])
+            command.extend(["-i", str(voiceover_path)])
 
         command.extend(
             [
@@ -101,7 +101,7 @@ def render_video_package(
             ]
         )
         if voiceover_path.exists():
-            command.extend(["-map", "1:a:0", "-c:a", "aac", "-b:a", "160k"])
+            command.extend(["-map", "1:a:0", "-c:a", "aac", "-b:a", "160k", "-shortest"])
 
         command.extend(
             [
@@ -211,7 +211,7 @@ def _render_scene_video(
             command.extend(["-i", str(image_path)])
         audio_index = len(selected_images)
         if voiceover_path.exists():
-            command.extend(["-i", str(voiceover_path), "-shortest"])
+            command.extend(["-i", str(voiceover_path)])
 
         filtergraph = _scene_filtergraph(
             scene_count=len(selected_images),
@@ -223,7 +223,7 @@ def _render_scene_video(
         )
         command.extend(["-filter_complex", filtergraph, "-map", "[vout]"])
         if voiceover_path.exists():
-            command.extend(["-map", f"{audio_index}:a:0", "-c:a", "aac", "-b:a", "160k"])
+            command.extend(["-map", f"{audio_index}:a:0", "-c:a", "aac", "-b:a", "160k", "-shortest"])
         command.extend(
             [
                 "-t",

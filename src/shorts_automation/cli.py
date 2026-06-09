@@ -10,7 +10,7 @@ from .planner import build_daily_network_plan, write_video_packages
 from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render_all, render_video_package
 from .runner import run_daily
 from .sample_data import SAMPLE_TRENDS
-from .tts import synthesize_voiceovers
+from .tts import synthesize_voiceover, synthesize_voiceovers
 from .visuals import generate_visuals_for_dirs, generate_visuals_for_package
 
 
@@ -38,6 +38,9 @@ def main(argv: list[str] | None = None) -> int:
     render_parser.add_argument("video_dir", help="Directory containing video-plan.json and subtitles.srt.")
     render_parser.add_argument("--quick-preview", action="store_true", help="Render preview.mp4 instead of final.mp4.")
     render_parser.add_argument("--preview-only", action="store_true", help="Alias for --quick-preview.")
+    render_parser.add_argument("--with-audio", action="store_true", help="Generate voiceover.mp3 before rendering when missing.")
+    render_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=["mock", "elevenlabs", "off"])
+    render_parser.add_argument("--force-tts", action="store_true", help="Regenerate voiceover.mp3 before rendering.")
 
     visuals_parser = subparsers.add_parser("generate-visuals", help="Generate scene images from asset-prompts.json.")
     visuals_parser.add_argument("video_dir", help="Video package directory or a videos root containing packages.")
@@ -52,9 +55,15 @@ def main(argv: list[str] | None = None) -> int:
     generate_parser.add_argument("--image-provider", default=os.getenv("IMAGE_PROVIDER", "auto"), choices=["auto", "openai", "replicate", "placeholder"])
     generate_parser.add_argument("--quick-preview", action="store_true")
 
-    tts_parser = subparsers.add_parser("generate-tts", help="Generate voiceover.mp3 files when a TTS provider is available.")
-    tts_parser.add_argument("video_root", help="Directory containing video package folders.")
+    tts_parser = subparsers.add_parser("generate-tts", help="Generate voiceover.mp3 for one video package.")
+    tts_parser.add_argument("video_dir", help="Directory containing voiceover.txt.")
     tts_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=["mock", "elevenlabs", "off"])
+    tts_parser.add_argument("--force", action="store_true", help="Regenerate voiceover.mp3 even when it already exists.")
+
+    tts_all_parser = subparsers.add_parser("generate-tts-all", help="Generate voiceover.mp3 files for every package in a videos directory.")
+    tts_all_parser.add_argument("videos_dir", help="Directory containing video package folders.")
+    tts_all_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=["mock", "elevenlabs", "off"])
+    tts_all_parser.add_argument("--force", action="store_true", help="Regenerate existing voiceover.mp3 files.")
 
     dashboard_parser = subparsers.add_parser("dashboard", help="Start the local review dashboard.")
     dashboard_parser.add_argument("--output-dir", default=os.getenv("SHORTS_OUTPUT_DIR", "outputs"))
@@ -82,12 +91,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "render-video":
+        tts_result = None
+        if args.with_audio:
+            tts_result = synthesize_voiceover(
+                Path(args.video_dir),
+                provider_name=args.tts_provider,
+                force=args.force_tts,
+            )
         result = render_video_package(
             Path(args.video_dir),
             duration_seconds=PREVIEW_DURATION_SECONDS if args.quick_preview or args.preview_only else DEFAULT_DURATION_SECONDS,
             preview=args.quick_preview or args.preview_only,
         )
-        print(json.dumps(result, ensure_ascii=False))
+        print(json.dumps({"tts": tts_result, "render": result} if tts_result else result, ensure_ascii=False))
         return 0 if result["rendered"] or result.get("warning") else 1
 
     if args.command == "generate-visuals":
@@ -141,7 +157,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "generate-tts":
-        result = synthesize_voiceovers(Path(args.video_root), provider_name=args.tts_provider)
+        result = synthesize_voiceover(Path(args.video_dir), provider_name=args.tts_provider, force=args.force)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+
+    if args.command == "generate-tts-all":
+        result = synthesize_voiceovers(Path(args.videos_dir), provider_name=args.tts_provider, force=args.force)
         print(json.dumps(result, ensure_ascii=False))
         return 0
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render_video_package
 from .status_store import DEFAULT_STATUS, StatusStore, VALID_STATUSES
+from .tts import synthesize_voiceover
 from .visuals import generate_visuals_for_package, load_scene_manifest, visuals_available
 
 
@@ -99,7 +100,13 @@ def serve_dashboard(output_dir: Path, host: str = "127.0.0.1", port: int = 8765)
 
             if action == "generate_visuals":
                 generate_visuals_for_package(video_dir, provider_name=params.get("provider", ["auto"])[0])
+            elif action == "generate_tts":
+                synthesize_voiceover(video_dir, provider_name=params.get("provider", ["elevenlabs"])[0], force=False)
             elif action == "rerender":
+                render_video_package(video_dir, duration_seconds=PREVIEW_DURATION_SECONDS, preview=True)
+                render_video_package(video_dir, duration_seconds=DEFAULT_DURATION_SECONDS, preview=False)
+            elif action == "rerender_audio":
+                synthesize_voiceover(video_dir, provider_name=params.get("provider", ["elevenlabs"])[0], force=False)
                 render_video_package(video_dir, duration_seconds=PREVIEW_DURATION_SECONDS, preview=True)
                 render_video_package(video_dir, duration_seconds=DEFAULT_DURATION_SECONDS, preview=False)
             else:
@@ -210,6 +217,7 @@ def render_package_card(output_dir: Path, package: dict) -> str:
           <span class="pill status-{slug(package["status"])}">{_e(package["status"])}</span>
           <span class="pill">{_e(package["category"])}</span>
           {visual_badge(package["visuals_ready"])}
+          {audio_badge(package["audio_ready"])}
         </div>
         <h2><a href="{detail_url}">{_e(package["trend_title"])}</a></h2>
         <div class="score-grid">
@@ -238,6 +246,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     final_mp4 = video_dir / "final.mp4"
     preview_mp4 = video_dir / "preview.mp4"
     voiceover_mp3 = video_dir / "voiceover.mp3"
+    tts_result = _read_json(video_dir / "tts-result.json")
     rel = str(video_dir.relative_to(output_dir))
     download = _download_link(output_dir, final_mp4)
     visual_warning = ""
@@ -288,11 +297,25 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
             </form>
             <form class="production-actions" method="post" action="/action">
               <input type="hidden" name="dir" value="{_e(rel)}">
+              <input type="hidden" name="action" value="generate_tts">
+              <input type="hidden" name="provider" value="elevenlabs">
+              <button type="submit">Generate Voiceover</button>
+            </form>
+            <form class="production-actions" method="post" action="/action">
+              <input type="hidden" name="dir" value="{_e(rel)}">
               <input type="hidden" name="action" value="rerender">
               <button type="submit">Re-render Video</button>
             </form>
+            <form class="production-actions" method="post" action="/action">
+              <input type="hidden" name="dir" value="{_e(rel)}">
+              <input type="hidden" name="action" value="rerender_audio">
+              <input type="hidden" name="provider" value="elevenlabs">
+              <button type="submit">Re-render With Audio</button>
+            </form>
             <h2>Quick Preview</h2>
             {_video_html(output_dir, preview_mp4, "No preview.mp4 yet")}
+            <h2>Voiceover Audio</h2>
+            {_audio_html(output_dir, voiceover_mp3)}
           </div>
         </section>
         <section class="score-strip">
@@ -304,6 +327,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
         {scene_timeline(output_dir, video_dir, manifest)}
         {file_section("script.txt", _read_text(video_dir / "script.txt"))}
         {file_section("voiceover.txt", _read_text(video_dir / "voiceover.txt"))}
+        {file_section("tts-result.json", json.dumps(tts_result, ensure_ascii=False, indent=2))}
         {file_section("subtitles.srt", _read_text(video_dir / "subtitles.srt"))}
         {file_section("upload-metadata.json", json.dumps(upload, ensure_ascii=False, indent=2))}
         {file_section("render-brief.txt", _read_text(video_dir / "render-brief.txt"))}
@@ -325,6 +349,7 @@ def build_package_rows(output_dir: Path, store: StatusStore) -> list[dict]:
                 "category": plan.get("trend", {}).get("category", ""),
                 "scores": plan.get("scores", {}),
                 "visuals_ready": visuals_available(video_dir),
+                "audio_ready": (video_dir / "voiceover.mp3").exists(),
             }
         )
     return rows
@@ -360,6 +385,12 @@ def visual_badge(ready: bool) -> str:
     if ready:
         return '<span class="pill status-approved">Visuals Ready</span>'
     return '<span class="pill status-rejected">VISUALS NOT GENERATED</span>'
+
+
+def audio_badge(ready: bool) -> str:
+    if ready:
+        return '<span class="pill status-approved">Voiceover Ready</span>'
+    return '<span class="pill status-needs-edit">Voiceover Missing</span>'
 
 
 def filter_options(current: str) -> str:
@@ -489,6 +520,7 @@ def page(title: str, body: str) -> str:
         .detail-grid {{ display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 16px; }}
         .video-panel, .review-panel, .file-section, .timeline-section {{ padding: 18px; }}
         video {{ width: min(360px, 100%); aspect-ratio: 9 / 16; background: #05070a; border-radius: 10px; display: block; }}
+        audio {{ width: min(360px, 100%); display: block; margin-bottom: 12px; }}
         .download-link {{ margin-top: 12px; width: min(360px, 100%); }}
         pre {{ margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: #05070a; color: #dce8f7; border: 1px solid #182638; padding: 14px; border-radius: 10px; }}
         .missing, .empty {{ padding: 24px; border: 1px dashed var(--line); color: var(--muted); border-radius: 10px; background: #0b111a; }}
@@ -543,6 +575,13 @@ def _video_html(output_dir: Path, path: Path, missing_text: str) -> str:
         poster_url = "/media?path=" + urllib.parse.quote(str(poster_path.relative_to(output_dir)))
         poster = f' poster="{poster_url}"'
     return f'<video controls preload="metadata"{poster} src="{media_url}"></video>'
+
+
+def _audio_html(output_dir: Path, path: Path) -> str:
+    if not path.exists():
+        return '<div class="missing">voiceover.mp3 missing. Use Generate Voiceover after configuring TTS, or run mock mode to verify the workflow.</div>'
+    media_url = "/media?path=" + urllib.parse.quote(str(path.relative_to(output_dir)))
+    return f'<audio controls preload="metadata" src="{media_url}"></audio>'
 
 
 def _download_link(output_dir: Path, path: Path) -> str:
