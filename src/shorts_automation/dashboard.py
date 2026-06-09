@@ -7,7 +7,9 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render_video_package
 from .status_store import DEFAULT_STATUS, StatusStore, VALID_STATUSES
+from .visuals import generate_visuals_for_package, load_scene_manifest, visuals_available
 
 
 STATUS_ORDER = ["Needs Edit", "Approved", "Rejected"]
@@ -56,6 +58,9 @@ def serve_dashboard(output_dir: Path, host: str = "127.0.0.1", port: int = 8765)
 
         def do_POST(self) -> None:
             parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == "/action":
+                self._handle_action()
+                return
             if parsed.path != "/status":
                 self._send_text("Not found", status=404)
                 return
@@ -81,6 +86,31 @@ def serve_dashboard(output_dir: Path, host: str = "127.0.0.1", port: int = 8765)
             self.send_header("Location", target)
             self.end_headers()
 
+        def _handle_action(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length).decode("utf-8")
+            params = urllib.parse.parse_qs(body)
+            video_dir = _safe_video_dir(output_dir, params.get("dir", [""])[0])
+            action = params.get("action", [""])[0]
+
+            if not video_dir:
+                self._send_text("Invalid video dir", status=400)
+                return
+
+            if action == "generate_visuals":
+                generate_visuals_for_package(video_dir, provider_name=params.get("provider", ["auto"])[0])
+            elif action == "rerender":
+                render_video_package(video_dir, duration_seconds=PREVIEW_DURATION_SECONDS, preview=True)
+                render_video_package(video_dir, duration_seconds=DEFAULT_DURATION_SECONDS, preview=False)
+            else:
+                self._send_text("Invalid action", status=400)
+                return
+
+            target = "/video?dir=" + urllib.parse.quote(str(video_dir.relative_to(output_dir)))
+            self.send_response(303)
+            self.send_header("Location", target)
+            self.end_headers()
+
         def log_message(self, format: str, *args: object) -> None:
             return
 
@@ -98,6 +128,13 @@ def serve_dashboard(output_dir: Path, host: str = "127.0.0.1", port: int = 8765)
 
         def _send_file(self, path: Path, download: bool = False) -> None:
             content_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+            if path.suffix.lower() in {".jpg", ".jpeg"}:
+                try:
+                    with path.open("rb") as file:
+                        if file.read(8) == b"\x89PNG\r\n\x1a\n":
+                            content_type = "image/png"
+                except OSError:
+                    pass
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             if download:
@@ -172,6 +209,7 @@ def render_package_card(output_dir: Path, package: dict) -> str:
         <div class="card-topline">
           <span class="pill status-{slug(package["status"])}">{_e(package["status"])}</span>
           <span class="pill">{_e(package["category"])}</span>
+          {visual_badge(package["visuals_ready"])}
         </div>
         <h2><a href="{detail_url}">{_e(package["trend_title"])}</a></h2>
         <div class="score-grid">
@@ -195,12 +233,16 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     plan = _read_json(video_dir / "video-plan.json")
     upload = _read_json(video_dir / "upload-metadata.json")
     prompts = _read_json(video_dir / "asset-prompts.json")
+    manifest = load_scene_manifest(video_dir)
     status_data = store.get(video_dir)
     final_mp4 = video_dir / "final.mp4"
     preview_mp4 = video_dir / "preview.mp4"
     voiceover_mp3 = video_dir / "voiceover.mp3"
     rel = str(video_dir.relative_to(output_dir))
     download = _download_link(output_dir, final_mp4)
+    visual_warning = ""
+    if not visuals_available(video_dir):
+        visual_warning = '<div class="visual-warning">VISUALS NOT GENERATED</div>'
     audio_warning = ""
     if (final_mp4.exists() or preview_mp4.exists()) and not voiceover_mp3.exists():
         audio_warning = '<div class="warning">Silent render: voiceover.mp3 is missing. Add ElevenLabs audio and rerender for voice.</div>'
@@ -221,6 +263,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
         <section class="detail-grid">
           <div class="video-panel">
             <h2>Final Video</h2>
+            {visual_warning}
             {audio_warning}
             {_video_html(output_dir, final_mp4, "No final.mp4 yet")}
             {download}
@@ -236,6 +279,18 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
                 {status_button("Needs Edit", "Needs Edit")}
               </div>
             </form>
+            <h2>Production Actions</h2>
+            <form class="production-actions" method="post" action="/action">
+              <input type="hidden" name="dir" value="{_e(rel)}">
+              <input type="hidden" name="action" value="generate_visuals">
+              <input type="hidden" name="provider" value="auto">
+              <button type="submit">Generate Visuals</button>
+            </form>
+            <form class="production-actions" method="post" action="/action">
+              <input type="hidden" name="dir" value="{_e(rel)}">
+              <input type="hidden" name="action" value="rerender">
+              <button type="submit">Re-render Video</button>
+            </form>
             <h2>Quick Preview</h2>
             {_video_html(output_dir, preview_mp4, "No preview.mp4 yet")}
           </div>
@@ -244,8 +299,9 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
           {score_box("Viral", plan.get("scores", {}).get("viral_potential_score", ""))}
           {score_box("Trend", plan.get("scores", {}).get("trend_score", ""))}
           {score_box("Growth", plan.get("scores", {}).get("growth_score", ""))}
-          {score_box("Competition", plan.get("scores", {}).get("competition_score", ""))}
+        {score_box("Competition", plan.get("scores", {}).get("competition_score", ""))}
         </section>
+        {scene_timeline(output_dir, video_dir, manifest)}
         {file_section("script.txt", _read_text(video_dir / "script.txt"))}
         {file_section("voiceover.txt", _read_text(video_dir / "voiceover.txt"))}
         {file_section("subtitles.srt", _read_text(video_dir / "subtitles.srt"))}
@@ -268,6 +324,7 @@ def build_package_rows(output_dir: Path, store: StatusStore) -> list[dict]:
                 "trend_title": plan.get("trend", {}).get("title", video_dir.name),
                 "category": plan.get("trend", {}).get("category", ""),
                 "scores": plan.get("scores", {}),
+                "visuals_ready": visuals_available(video_dir),
             }
         )
     return rows
@@ -299,6 +356,12 @@ def status_button(status: str, label: str) -> str:
     return f'<button class="btn btn-{slug(status)}" type="submit" name="status" value="{_e(status)}">{_e(label)}</button>'
 
 
+def visual_badge(ready: bool) -> str:
+    if ready:
+        return '<span class="pill status-approved">Visuals Ready</span>'
+    return '<span class="pill status-rejected">VISUALS NOT GENERATED</span>'
+
+
 def filter_options(current: str) -> str:
     options = [("all", "All"), *[(status, status) for status in STATUS_ORDER]]
     return "".join(
@@ -316,6 +379,44 @@ def sort_options(current: str) -> str:
 
 def file_section(title: str, content: str) -> str:
     return f'<section class="file-section"><h2>{_e(title)}</h2><pre>{_e(content)}</pre></section>'
+
+
+def scene_timeline(output_dir: Path, video_dir: Path, manifest: dict) -> str:
+    scenes = manifest.get("scenes", [])
+    if not scenes:
+        return '<section class="timeline-section"><h2>Scene Timeline</h2><div class="visual-warning">VISUALS NOT GENERATED</div></section>'
+
+    cards = []
+    for scene in scenes:
+        image = video_dir / scene.get("image", "")
+        image_html = '<div class="scene-missing">Missing image</div>'
+        if image.exists():
+            image_url = "/media?path=" + urllib.parse.quote(str(image.relative_to(output_dir)))
+            image_html = f'<img class="scene-image" src="{image_url}" alt="Scene {scene.get("scene", "")}">'
+        cards.append(
+            f"""
+            <article class="scene-card">
+              {image_html}
+              <div class="scene-body">
+                <div class="scene-meta">
+                  <span>Scene {_e(scene.get("scene", ""))}</span>
+                  <span>{_e(scene.get("duration_seconds", ""))}s</span>
+                  <span>{_e(scene.get("provider", ""))}</span>
+                </div>
+                <p>{_e(scene.get("prompt", ""))}</p>
+              </div>
+            </article>
+            """
+        )
+    return f"""
+    <section class="timeline-section">
+      <div class="section-title-row">
+        <h2>Scene Timeline</h2>
+        <span class="pill">{len(scenes)} scenes</span>
+      </div>
+      <div class="timeline-grid">{''.join(cards)}</div>
+    </section>
+    """
 
 
 def page(title: str, body: str) -> str:
@@ -346,12 +447,12 @@ def page(title: str, body: str) -> str:
         h1 {{ margin: 0; font-size: clamp(30px, 4vw, 52px); letter-spacing: 0; }}
         h2 {{ margin: 0 0 14px; font-size: 18px; }}
         h3 {{ margin: 0 0 10px; font-size: 15px; }}
-        .hero, .detail-header, .summary, .controls, .cards, .detail-grid, .score-strip, .file-section {{ width: min(1240px, calc(100% - 32px)); margin: 18px auto; }}
+        .hero, .detail-header, .summary, .controls, .cards, .detail-grid, .score-strip, .file-section, .timeline-section {{ width: min(1240px, calc(100% - 32px)); margin: 18px auto; }}
         .hero, .detail-header {{ padding: 28px 0 8px; }}
         .eyebrow {{ color: var(--green); text-transform: uppercase; letter-spacing: .14em; font-size: 12px; font-weight: 700; margin: 0 0 10px; }}
         .muted {{ color: var(--muted); }}
         .summary {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }}
-        .summary-card, .controls, .card, .file-section, .video-panel, .review-panel, .score-box {{ background: color-mix(in srgb, var(--panel), transparent 4%); border: 1px solid var(--line); border-radius: 12px; }}
+        .summary-card, .controls, .card, .file-section, .video-panel, .review-panel, .score-box, .timeline-section, .scene-card {{ background: color-mix(in srgb, var(--panel), transparent 4%); border: 1px solid var(--line); border-radius: 12px; }}
         .summary-card {{ padding: 18px; }}
         .summary-card span, .score-box span {{ display: block; color: var(--muted); font-size: 13px; }}
         .summary-card strong {{ font-size: 34px; display: block; margin-top: 8px; }}
@@ -371,7 +472,8 @@ def page(title: str, body: str) -> str:
         .thumb {{ width: 100%; height: 100%; min-height: 210px; object-fit: cover; background: #17202a; }}
         .card-body {{ padding: 16px; display: grid; gap: 12px; }}
         .card h2 {{ font-size: 19px; line-height: 1.25; }}
-        .card-topline, .inline-actions, .review-actions {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+        .card-topline, .inline-actions, .review-actions, .production-actions {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+        .production-actions {{ margin: 0 0 10px; }}
         .pill {{ border: 1px solid var(--line); border-radius: 999px; color: var(--muted); padding: 5px 9px; font-size: 12px; }}
         .status-approved {{ color: var(--green); border-color: color-mix(in srgb, var(--green), transparent 45%); }}
         .status-rejected {{ color: var(--red); border-color: color-mix(in srgb, var(--red), transparent 45%); }}
@@ -385,13 +487,22 @@ def page(title: str, body: str) -> str:
         .btn-needs-edit {{ background: var(--amber); }}
         .detail-title-row {{ display: flex; align-items: start; justify-content: space-between; gap: 16px; }}
         .detail-grid {{ display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 16px; }}
-        .video-panel, .review-panel, .file-section {{ padding: 18px; }}
+        .video-panel, .review-panel, .file-section, .timeline-section {{ padding: 18px; }}
         video {{ width: min(360px, 100%); aspect-ratio: 9 / 16; background: #05070a; border-radius: 10px; display: block; }}
         .download-link {{ margin-top: 12px; width: min(360px, 100%); }}
         pre {{ margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: #05070a; color: #dce8f7; border: 1px solid #182638; padding: 14px; border-radius: 10px; }}
         .missing, .empty {{ padding: 24px; border: 1px dashed var(--line); color: var(--muted); border-radius: 10px; background: #0b111a; }}
         .warning {{ padding: 12px; margin: 0 0 12px; border: 1px solid color-mix(in srgb, var(--amber), transparent 35%); background: color-mix(in srgb, var(--amber), transparent 88%); color: var(--amber); border-radius: 10px; }}
-        @media (max-width: 900px) {{ .summary, .cards, .detail-grid, .score-strip {{ grid-template-columns: 1fr; }} .card {{ grid-template-columns: 88px minmax(0, 1fr); }} .thumb {{ min-height: 170px; }} .controls {{ align-items: stretch; flex-direction: column; }} }}
+        .visual-warning {{ padding: 14px; margin: 0 0 12px; border: 1px solid color-mix(in srgb, var(--red), transparent 28%); background: color-mix(in srgb, var(--red), transparent 88%); color: #ffb5bd; border-radius: 10px; font-weight: 800; letter-spacing: .08em; }}
+        .section-title-row {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }}
+        .timeline-grid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }}
+        .scene-card {{ overflow: hidden; background: var(--panel-2); }}
+        .scene-image, .scene-missing {{ width: 100%; aspect-ratio: 9 / 16; object-fit: cover; display: block; background: #05070a; }}
+        .scene-missing {{ display: grid; place-items: center; color: var(--muted); }}
+        .scene-body {{ padding: 12px; }}
+        .scene-body p {{ margin: 8px 0 0; color: #cbd8e8; font-size: 13px; line-height: 1.35; }}
+        .scene-meta {{ display: flex; gap: 6px; flex-wrap: wrap; color: var(--muted); font-size: 12px; }}
+        @media (max-width: 900px) {{ .summary, .cards, .detail-grid, .score-strip, .timeline-grid {{ grid-template-columns: 1fr; }} .card {{ grid-template-columns: 88px minmax(0, 1fr); }} .thumb {{ min-height: 170px; }} .controls {{ align-items: stretch; flex-direction: column; }} }}
       </style>
     </head>
     <body>{body}</body>

@@ -11,6 +11,7 @@ from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render
 from .runner import run_daily
 from .sample_data import SAMPLE_TRENDS
 from .tts import synthesize_voiceovers
+from .visuals import generate_visuals_for_dirs, generate_visuals_for_package
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -29,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     daily_parser.add_argument("--render", action="store_true", help="Render final.mp4 files with FFmpeg when available.")
     daily_parser.add_argument("--upload", action="store_true", help="Reserved for explicit YouTube upload. Disabled without OAuth integration.")
     daily_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=["mock", "elevenlabs", "off"])
+    daily_parser.add_argument("--image-provider", default=os.getenv("IMAGE_PROVIDER", "auto"), choices=["auto", "openai", "replicate", "placeholder"])
     daily_parser.add_argument("--quick-preview", action="store_true", help="Render 15 second low-resolution preview.mp4 files.")
     daily_parser.add_argument("--preview-only", action="store_true", help="Render preview.mp4 and thumbnail only; skip final.mp4.")
 
@@ -37,12 +39,17 @@ def main(argv: list[str] | None = None) -> int:
     render_parser.add_argument("--quick-preview", action="store_true", help="Render preview.mp4 instead of final.mp4.")
     render_parser.add_argument("--preview-only", action="store_true", help="Alias for --quick-preview.")
 
+    visuals_parser = subparsers.add_parser("generate-visuals", help="Generate scene images from asset-prompts.json.")
+    visuals_parser.add_argument("video_dir", help="Video package directory or a videos root containing packages.")
+    visuals_parser.add_argument("--image-provider", default=os.getenv("IMAGE_PROVIDER", "auto"), choices=["auto", "openai", "replicate", "placeholder"])
+
     generate_parser = subparsers.add_parser("generate-video", help="Generate sample video packages and optionally render them.")
     generate_parser.add_argument("--channel-name", default=os.getenv("CHANNEL_NAME", "Masyra Labs"))
     generate_parser.add_argument("--output-dir", default=os.getenv("SHORTS_OUTPUT_DIR", "outputs"))
     generate_parser.add_argument("--top-n", type=int, default=1)
     generate_parser.add_argument("--render", action="store_true")
     generate_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=["mock", "elevenlabs", "off"])
+    generate_parser.add_argument("--image-provider", default=os.getenv("IMAGE_PROVIDER", "auto"), choices=["auto", "openai", "replicate", "placeholder"])
     generate_parser.add_argument("--quick-preview", action="store_true")
 
     tts_parser = subparsers.add_parser("generate-tts", help="Generate voiceover.mp3 files when a TTS provider is available.")
@@ -67,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
             render=args.render,
             upload=args.upload,
             tts_provider=args.tts_provider,
+            image_provider=args.image_provider,
             quick_preview=args.quick_preview,
             preview_only=args.preview_only,
         )
@@ -82,12 +90,30 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result["rendered"] or result.get("warning") else 1
 
+    if args.command == "generate-visuals":
+        path = Path(args.video_dir)
+        if (path / "video-plan.json").exists():
+            result = generate_visuals_for_package(path, provider_name=args.image_provider)
+        else:
+            video_dirs = [
+                child for child in sorted(path.iterdir())
+                if child.is_dir() and (child / "video-plan.json").exists()
+            ]
+            result = generate_visuals_for_dirs(video_dirs, provider_name=args.image_provider)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+
     if args.command == "generate-video":
         output_dir = Path(args.output_dir) / "generated-video"
         output_dir.mkdir(parents=True, exist_ok=True)
         plan = build_daily_network_plan(SAMPLE_TRENDS, channel_name=args.channel_name, top_n=args.top_n)
         package_files = write_video_packages(plan, output_dir)
         tts_result = synthesize_voiceovers(output_dir / "videos", provider_name=args.tts_provider)
+        video_dirs = [
+            child for child in sorted((output_dir / "videos").iterdir())
+            if child.is_dir() and (child / "video-plan.json").exists()
+        ]
+        visuals_result = generate_visuals_for_dirs(video_dirs, provider_name=args.image_provider) if args.render else None
         render_result = (
             render_all(
                 output_dir / "videos",
@@ -104,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
                     "videos_prepared": len(plan["items"]),
                     "package_files_written": len(package_files),
                     "tts": tts_result,
+                    "visuals": visuals_result,
                     "mp4_rendered": render_result["rendered_count"] if render_result else 0,
                     "final_mp4_paths": render_result["outputs"] if render_result else [],
                     "render_warnings": render_result["warnings"] if render_result else [],

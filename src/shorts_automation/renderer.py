@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from .visuals import load_scene_manifest, visuals_available
+
 
 WIDTH = 1080
 HEIGHT = 1920
@@ -47,6 +49,16 @@ def render_video_package(
         return _failed(video_dir, "video-plan.json not found")
 
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    visual_images = _scene_images(video_dir)
+    if len(visual_images) >= 4:
+        return _render_scene_video(
+            video_dir=video_dir,
+            plan=plan,
+            image_paths=visual_images,
+            duration_seconds=duration_seconds,
+            preview=preview,
+        )
+
     title = clean_title(plan)
     category = plan.get("trend", {}).get("category", "Trend")
     subtitle_text = clean_subtitle_text(plan, duration_seconds)
@@ -128,7 +140,11 @@ def render_video_package(
         "thumbnail_warning": thumbnail_result.get("warning"),
         "audio_used": voiceover_path.exists(),
         "preview": preview,
-        "warning": None if voiceover_path.exists() else "Rendered silent video: voiceover.mp3 not found.",
+        "visuals_used": False,
+        "warning": _combine_warnings(
+            "VISUALS NOT GENERATED: rendered fallback background.",
+            None if voiceover_path.exists() else "Rendered silent video: voiceover.mp3 not found.",
+        ),
     }
 
 
@@ -169,6 +185,185 @@ def _failed(video_dir: Path, warning: str) -> dict:
     }
 
 
+def _render_scene_video(
+    *,
+    video_dir: Path,
+    plan: dict,
+    image_paths: list[Path],
+    duration_seconds: int,
+    preview: bool,
+) -> dict:
+    subtitles_path = video_dir / "subtitles.srt"
+    voiceover_path = video_dir / "voiceover.mp3"
+    output_path = video_dir / ("preview.mp4" if preview else "final.mp4")
+    thumbnail_path = video_dir / ("preview-thumbnail.jpg" if preview else "thumbnail.jpg")
+    width = PREVIEW_WIDTH if preview else WIDTH
+    height = PREVIEW_HEIGHT if preview else HEIGHT
+    selected_images, scene_duration = _select_scene_timing(image_paths, duration_seconds)
+    subtitle_text = clean_subtitle_text(plan, duration_seconds)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        render_subtitles_path = Path(temp_dir) / "render-subtitles.srt"
+        render_subtitles_path.write_text(make_render_subtitles(subtitle_text, duration_seconds), encoding="utf-8")
+
+        command = ["ffmpeg", "-y"]
+        for image_path in selected_images:
+            command.extend(["-i", str(image_path)])
+        audio_index = len(selected_images)
+        if voiceover_path.exists():
+            command.extend(["-i", str(voiceover_path), "-shortest"])
+
+        filtergraph = _scene_filtergraph(
+            scene_count=len(selected_images),
+            frames=max(1, int(scene_duration * FPS)),
+            width=width,
+            height=height,
+            subtitles_path=render_subtitles_path if subtitles_path.exists() else None,
+            preview=preview,
+        )
+        command.extend(["-filter_complex", filtergraph, "-map", "[vout]"])
+        if voiceover_path.exists():
+            command.extend(["-map", f"{audio_index}:a:0", "-c:a", "aac", "-b:a", "160k"])
+        command.extend(
+            [
+                "-t",
+                str(duration_seconds),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast" if preview else "medium",
+                "-crf",
+                "27" if preview else "22",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(output_path),
+            ]
+        )
+
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=240)
+
+    if completed.returncode != 0:
+        return {
+            "video_dir": str(video_dir),
+            "rendered": False,
+            "output": None,
+            "warning": "FFmpeg scene render failed.",
+            "stderr": completed.stderr[-2000:],
+            "visuals_used": True,
+        }
+
+    thumbnail_result = _create_scene_thumbnail(selected_images[0], thumbnail_path)
+    if not preview:
+        preview_thumb = video_dir / "preview-thumbnail.jpg"
+        if not preview_thumb.exists() and thumbnail_path.exists():
+            shutil.copyfile(thumbnail_path, preview_thumb)
+
+    return {
+        "video_dir": str(video_dir),
+        "rendered": True,
+        "output": str(output_path),
+        "thumbnail": str(thumbnail_path) if thumbnail_path.exists() else None,
+        "thumbnail_warning": thumbnail_result.get("warning"),
+        "audio_used": voiceover_path.exists(),
+        "preview": preview,
+        "visuals_used": True,
+        "scene_count": len(selected_images),
+        "warning": None if voiceover_path.exists() else "Rendered silent video: voiceover.mp3 not found.",
+    }
+
+
+def _scene_images(video_dir: Path) -> list[Path]:
+    if not visuals_available(video_dir):
+        return []
+    manifest = load_scene_manifest(video_dir)
+    images = []
+    for scene in manifest.get("scenes", []):
+        path = video_dir / scene.get("image", "")
+        if path.exists():
+            images.append(path)
+    return images[:8]
+
+
+def _select_scene_timing(image_paths: list[Path], duration_seconds: int) -> tuple[list[Path], float]:
+    target_count = max(4, min(8, round(duration_seconds / 3)))
+    selected = image_paths[: min(len(image_paths), target_count)]
+    while len(selected) < 4 and image_paths:
+        selected.append(image_paths[len(selected) % len(image_paths)])
+    scene_duration = duration_seconds / max(len(selected), 1)
+    scene_duration = max(2.0, min(4.0, scene_duration))
+    return selected, scene_duration
+
+
+def _scene_filtergraph(
+    *,
+    scene_count: int,
+    frames: int,
+    width: int,
+    height: int,
+    subtitles_path: Path | None,
+    preview: bool,
+) -> str:
+    parts = []
+    for index in range(scene_count):
+        direction = index % 4
+        if direction == 0:
+            x_expr = "iw/2-(iw/zoom/2)"
+            y_expr = "ih/2-(ih/zoom/2)"
+        elif direction == 1:
+            x_expr = f"(iw-iw/zoom)*on/{frames}"
+            y_expr = "ih/2-(ih/zoom/2)"
+        elif direction == 2:
+            x_expr = f"(iw-iw/zoom)*(1-on/{frames})"
+            y_expr = "ih/2-(ih/zoom/2)"
+        else:
+            x_expr = "iw/2-(iw/zoom/2)"
+            y_expr = f"(ih-ih/zoom)*on/{frames}"
+
+        parts.append(
+            f"[{index}:v]"
+            f"scale={int(width * 1.14)}:{int(height * 1.14)}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},"
+            f"zoompan=z='1+0.055*on/{frames}':x='{x_expr}':y='{y_expr}':d={frames}:s={width}x{height}:fps={FPS},"
+            f"setsar=1[v{index}]"
+        )
+
+    concat_inputs = "".join(f"[v{index}]" for index in range(scene_count))
+    parts.append(f"{concat_inputs}concat=n={scene_count}:v=1:a=0,format=yuv420p[base]")
+    if subtitles_path:
+        parts.append(f"[base]{_subtitles_filter(subtitles_path, preview=preview)}[vout]")
+    else:
+        parts.append("[base]format=yuv420p[vout]")
+    return ";".join(parts)
+
+
+def _create_scene_thumbnail(image_path: Path, thumbnail_path: Path) -> dict:
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(image_path),
+        "-vf",
+        f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,crop={WIDTH}:{HEIGHT}",
+        "-frames:v",
+        "1",
+        "-q:v",
+        "3",
+        str(thumbnail_path),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    if completed.returncode != 0:
+        shutil.copyfile(image_path, thumbnail_path)
+        return {"created": True, "warning": completed.stderr[-1000:]}
+    return {"created": True, "warning": None}
+
+
+def _combine_warnings(*warnings: str | None) -> str | None:
+    active = [warning for warning in warnings if warning]
+    return " ".join(active) if active else None
+
+
 def _background_color(category: str) -> str:
     colors = {
         "Sports": "0x17324D",
@@ -206,17 +401,17 @@ def _draw_background_overlay(category: str, width: int, height: int) -> str:
 
 
 def _draw_title_filter(title_path: Path, preview: bool = False) -> str:
-    fontsize = 28 if preview else 46
+    fontsize = 14 if preview else 23
     x = 42 if preview else 82
     y = 112 if preview else 215
-    boxborderw = 14 if preview else 22
+    boxborderw = 7 if preview else 11
     return (
         "drawtext="
         f"fontfile='{_ffmpeg_path(_font_path())}':"
         f"textfile='{_ffmpeg_path(title_path)}':"
         "fontcolor=white:"
         f"fontsize={fontsize}:"
-        f"line_spacing={8 if preview else 14}:"
+        f"line_spacing={4 if preview else 7}:"
         f"x={x}:"
         f"y={y}:"
         "box=1:"
@@ -231,12 +426,12 @@ def _draw_brand_filter(preview: bool = False) -> str:
         f"fontfile='{_ffmpeg_path(_font_path())}':"
         "text='Masyra Labs':"
         "fontcolor=white@0.92:"
-        f"fontsize={20 if preview else 34}:"
+        f"fontsize={10 if preview else 17}:"
         f"x={42 if preview else 82}:"
         f"y={42 if preview else 78}:"
         "box=1:"
         "boxcolor=black@0.22:"
-        f"boxborderw={8 if preview else 14}"
+        f"boxborderw={4 if preview else 7}"
     )
 
 

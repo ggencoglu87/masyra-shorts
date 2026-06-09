@@ -68,11 +68,18 @@ Mevcut surum her trend icin su dosyalari hazirlar:
 - `video-plan.json`
 - `upload-metadata.json`
 
-FFmpeg varsa sistem her paket icin temiz dikey Shorts layout ile `final.mp4` uretir. Varsayilan final video suresi 25 saniyedir. `--render` artik otomatik olarak 12 saniyelik `preview.mp4` ve thumbnail da uretir. `--preview-only` yalnizca hizli preview ve thumbnail uretir. FFmpeg yoksa script, voiceover, altyazi ve metadata uretimi devam eder; summary icinde net uyari doner.
+Sistem her paket icin `asset-prompts.json` uretir. Render istenirse once bu promptlardan 4-8 adet sahne gorseli uretilir:
+
+- `IMAGE_PROVIDER=auto`: once OpenAI Images, sonra Replicate, sonra local placeholder fallback.
+- `IMAGE_PROVIDER=openai`: `OPENAI_API_KEY` ile OpenAI Images kullanir.
+- `IMAGE_PROVIDER=replicate`: `REPLICATE_API_TOKEN` ve `REPLICATE_IMAGE_VERSION` ile Replicate kullanir.
+- `IMAGE_PROVIDER=placeholder`: API olmadan yerel sahne PNG'leri uretir.
+
+FFmpeg varsa sistem sahne gorsellerinden Ken Burns zoom/pan hareketli temiz dikey Shorts videolari uretir. Varsayilan final video suresi 25 saniyedir. Her sahne 2-4 saniye gosterilir, altyazilar yalnizca altta yer alir, sahne gorsellerinin ustune baslik/metin bloklari basilmaz. `--render` artik otomatik olarak 12 saniyelik `preview.mp4` ve `thumbnail.jpg` da uretir. `--preview-only` yalnizca hizli preview ve thumbnail uretir. FFmpeg yoksa script, voiceover, altyazi, metadata ve sahne gorselleri uretimi devam eder; summary icinde net uyari doner.
 
 ElevenLabs varsayilan TTS provider'dir. `ELEVENLABS_API_KEY` varsa `voiceover.mp3` uretilir ve FFmpeg render bunu final/preview videoya gomar. API key yoksa sistem mock fallback ile `voiceover.txt` uretmeye devam eder.
 
-Dashboard ile her gunluk trend/video paketini thumbnail, preview/final video, script ve checklist ile inceleyebilir, `Needs Edit`, `Approved`, `Rejected` statuslerinden birini verebilirsin. Statusler `outputs/review-status.json` dosyasinda saklanir.
+Dashboard ile her gunluk trend/video paketini thumbnail, preview/final video, sahne timeline'i, script ve checklist ile inceleyebilir, `Needs Edit`, `Approved`, `Rejected` statuslerinden birini verebilirsin. Detay sayfasinda `Generate Visuals` promptlardan sahne gorselleri uretir, `Re-render Video` mevcut sahnelerle preview/final videoyu yeniden render eder. Statusler `outputs/review-status.json` dosyasinda saklanir.
 
 ## Kurulum
 
@@ -119,6 +126,12 @@ TTS_PROVIDER=elevenlabs
 ELEVENLABS_API_KEY=
 ELEVENLABS_VOICE_ID=JBFqnCBsd6RMkjVDRZzb
 ELEVENLABS_MODEL_ID=eleven_multilingual_v2
+IMAGE_PROVIDER=auto
+OPENAI_API_KEY=
+OPENAI_IMAGE_MODEL=gpt-image-1
+OPENAI_IMAGE_SIZE=1024x1536
+REPLICATE_API_TOKEN=
+REPLICATE_IMAGE_VERSION=
 YOUTUBE_OAUTH_CLIENT_ID=
 YOUTUBE_OAUTH_CLIENT_SECRET=
 ```
@@ -135,6 +148,27 @@ Ornek veriyle rapor, paketler ve FFmpeg varsa MP4 render:
 
 ```powershell
 py -m shorts_automation.cli daily-run --sample --render
+```
+
+Ornek veriyle local placeholder sahne gorselleri ve preview render:
+
+```powershell
+py -m shorts_automation.cli daily-run --sample --render --preview-only --image-provider placeholder
+```
+
+OpenAI Images ile sahne gorselleri uretmek:
+
+```powershell
+$env:OPENAI_API_KEY="your_key_here"
+py -m shorts_automation.cli daily-run --sample --render --image-provider openai
+```
+
+Replicate ile sahne gorselleri uretmek:
+
+```powershell
+$env:REPLICATE_API_TOKEN="your_token_here"
+$env:REPLICATE_IMAGE_VERSION="your_model_version_here"
+py -m shorts_automation.cli daily-run --sample --render --image-provider replicate
 ```
 
 15 saniyelik hizli preview render:
@@ -166,6 +200,18 @@ Var olan video paketleri icin TTS calistirmak:
 
 ```powershell
 py -m shorts_automation.cli generate-tts outputs\2026-06-09\videos --tts-provider elevenlabs
+```
+
+Var olan tek paket icin sahne gorselleri uretmek:
+
+```powershell
+py -m shorts_automation.cli generate-visuals outputs\2026-06-09\videos\01-example --image-provider placeholder
+```
+
+Var olan video klasorundeki tum paketler icin sahne gorselleri uretmek:
+
+```powershell
+py -m shorts_automation.cli generate-visuals outputs\2026-06-09\videos --image-provider auto
 ```
 
 Canli kaynaklarla gunluk calisma:
@@ -243,6 +289,8 @@ Her gun icin `outputs/YYYY-MM-DD/` altinda:
 - `videos/01-.../preview.mp4` quick-preview modunda uretilen hizli onizleme
 - `videos/01-.../thumbnail.jpg`
 - `videos/01-.../preview-thumbnail.jpg`
+- `videos/01-.../scene-manifest.json`
+- `videos/01-.../scene-images/scene-01.png` ile baslayan 4-8 sahne gorseli
 - `videos/01-.../voiceover.mp3` ElevenLabs TTS basariliysa uretilen ses
 - `videos/01-.../asset-prompts.json`
 - `videos/01-.../copyright-checklist.json`
