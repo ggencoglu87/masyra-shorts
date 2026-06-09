@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -11,7 +12,7 @@ WIDTH = 1080
 HEIGHT = 1920
 FPS = 30
 DEFAULT_DURATION_SECONDS = 25
-PREVIEW_DURATION_SECONDS = 15
+PREVIEW_DURATION_SECONDS = 12
 PREVIEW_WIDTH = 540
 PREVIEW_HEIGHT = 960
 
@@ -44,16 +45,17 @@ def render_video_package(
 
     if not plan_path.exists():
         return _failed(video_dir, "video-plan.json not found")
-    if not subtitles_path.exists():
-        return _failed(video_dir, "subtitles.srt not found")
 
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    title = plan.get("title", "Masyra Labs Trend")
+    title = clean_title(plan)
     category = plan.get("trend", {}).get("category", "Trend")
+    subtitle_text = clean_subtitle_text(plan, duration_seconds)
 
     with tempfile.TemporaryDirectory() as temp_dir:
         title_path = Path(temp_dir) / "title.txt"
-        title_path.write_text(_wrap_text(title, 26), encoding="utf-8")
+        render_subtitles_path = Path(temp_dir) / "render-subtitles.srt"
+        title_path.write_text(_wrap_text(title, 24, max_lines=2), encoding="utf-8")
+        render_subtitles_path.write_text(make_render_subtitles(subtitle_text, duration_seconds), encoding="utf-8")
 
         filtergraph = ",".join(
             [
@@ -61,7 +63,7 @@ def render_video_package(
                 _draw_background_overlay(category, width, height),
                 _draw_title_filter(title_path, preview=preview),
                 _draw_brand_filter(preview=preview),
-                _subtitles_filter(subtitles_path),
+                _subtitles_filter(render_subtitles_path, preview=preview),
             ]
         )
 
@@ -126,7 +128,7 @@ def render_video_package(
         "thumbnail_warning": thumbnail_result.get("warning"),
         "audio_used": voiceover_path.exists(),
         "preview": preview,
-        "warning": None,
+        "warning": None if voiceover_path.exists() else "Rendered silent video: voiceover.mp3 not found.",
     }
 
 
@@ -197,17 +199,17 @@ def _draw_background_overlay(category: str, width: int, height: int) -> str:
         "Misc Viral": "0xA6F4C5",
     }.get(category, "0xA6F4C5")
     return (
-        f"drawbox=x=0:y=0:w={width}:h={int(height * 0.135)}:color={accent}@0.18:t=fill,"
-        f"drawbox=x={int(width * 0.065)}:y={int(height * 0.177)}:w={int(width * 0.87)}:h=6:color={accent}@0.75:t=fill,"
-        f"drawbox=x={int(width * 0.065)}:y={int(height * 0.786)}:w={int(width * 0.87)}:h=3:color=white@0.24:t=fill"
+        f"drawbox=x=0:y=0:w={width}:h={int(height * 0.18)}:color={accent}@0.12:t=fill,"
+        f"drawbox=x={int(width * 0.08)}:y={int(height * 0.18)}:w={int(width * 0.84)}:h=4:color={accent}@0.7:t=fill,"
+        f"drawbox=x={int(width * 0.08)}:y={int(height * 0.72)}:w={int(width * 0.84)}:h={int(height * 0.18)}:color=black@0.22:t=fill"
     )
 
 
 def _draw_title_filter(title_path: Path, preview: bool = False) -> str:
-    fontsize = 36 if preview else 62
-    x = 36 if preview else 70
-    y = 205 if preview else 410
-    boxborderw = 18 if preview else 28
+    fontsize = 28 if preview else 46
+    x = 42 if preview else 82
+    y = 112 if preview else 215
+    boxborderw = 14 if preview else 22
     return (
         "drawtext="
         f"fontfile='{_ffmpeg_path(_font_path())}':"
@@ -229,22 +231,24 @@ def _draw_brand_filter(preview: bool = False) -> str:
         f"fontfile='{_ffmpeg_path(_font_path())}':"
         "text='Masyra Labs':"
         "fontcolor=white@0.92:"
-        f"fontsize={26 if preview else 44}:"
-        f"x={36 if preview else 70}:"
-        f"y={58 if preview else 116}:"
+        f"fontsize={20 if preview else 34}:"
+        f"x={42 if preview else 82}:"
+        f"y={42 if preview else 78}:"
         "box=1:"
         "boxcolor=black@0.22:"
-        f"boxborderw={10 if preview else 18}"
+        f"boxborderw={8 if preview else 14}"
     )
 
 
-def _subtitles_filter(subtitles_path: Path) -> str:
+def _subtitles_filter(subtitles_path: Path, preview: bool = False) -> str:
+    fontsize = 13 if preview else 16
+    margin_v = 84 if preview else 170
     return (
         "subtitles="
         f"filename='{_ffmpeg_path(subtitles_path)}':"
-        "force_style='FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,"
+        f"force_style='FontName=Arial,FontSize={fontsize},PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&HAA000000,BorderStyle=3,Outline=1,Shadow=0,"
-        "Alignment=2,MarginV=190'"
+        f"Alignment=2,MarginV={margin_v}'"
     )
 
 
@@ -259,7 +263,7 @@ def _ffmpeg_path(path: Path) -> str:
     return str(path).replace("\\", "/").replace(":", "\\:")
 
 
-def _wrap_text(text: str, max_chars: int) -> str:
+def _wrap_text(text: str, max_chars: int, max_lines: int = 2) -> str:
     words = text.replace("#shorts", "").split()
     lines: list[str] = []
     current: list[str] = []
@@ -272,7 +276,7 @@ def _wrap_text(text: str, max_chars: int) -> str:
             current.append(word)
     if current:
         lines.append(" ".join(current))
-    return "\n".join(lines[:7])
+    return "\n".join(lines[:max_lines])
 
 
 def _create_thumbnail(video_path: Path, thumbnail_path: Path) -> dict:
@@ -293,3 +297,48 @@ def _create_thumbnail(video_path: Path, thumbnail_path: Path) -> dict:
     if completed.returncode != 0:
         return {"created": False, "warning": completed.stderr[-1000:]}
     return {"created": True, "warning": None}
+
+
+def clean_title(plan: dict) -> str:
+    raw = plan.get("trend", {}).get("title") or plan.get("title") or "Masyra Labs Trend"
+    raw = raw.replace("#shorts", "")
+    raw = re.sub(r"^(This .*?:|Sports Fans Are Talking About This:|Gamers Are Sharing This:)\s*", "", raw).strip()
+    return raw[:72].rstrip(" -:")
+
+
+def clean_subtitle_text(plan: dict, duration_seconds: int) -> str:
+    narration = plan.get("narration", "")
+    title = plan.get("trend", {}).get("title", "")
+    if title:
+        narration = narration.replace(title, "").replace("  ", " ")
+    narration = re.sub(r"^This [^.]+ trend is moving fast:\s*\.?\s*", "", narration, flags=re.IGNORECASE)
+    narration = narration.strip()
+    if not narration:
+        narration = "A quick original Masyra Labs breakdown of why this trend is moving."
+    words = narration.split()
+    max_words = 38 if duration_seconds <= PREVIEW_DURATION_SECONDS else 70
+    return " ".join(words[:max_words])
+
+
+def make_render_subtitles(text: str, duration_seconds: int) -> str:
+    words = text.split()
+    if not words:
+        return ""
+    chunk_size = 7
+    chunks = [" ".join(words[index:index + chunk_size]) for index in range(0, len(words), chunk_size)]
+    max_chunks = 3 if duration_seconds <= PREVIEW_DURATION_SECONDS else 5
+    chunks = chunks[:max_chunks]
+    start = max(2, int(duration_seconds * 0.42))
+    available = max(duration_seconds - start - 1, len(chunks) * 2)
+    block_duration = max(2, available // max(len(chunks), 1))
+    blocks = []
+    current = start
+    for index, chunk in enumerate(chunks, start=1):
+        end = min(duration_seconds - 1, current + block_duration)
+        blocks.append(f"{index}\n{_srt_time(current)} --> {_srt_time(end)}\n{chunk}\n")
+        current = end
+    return "\n".join(blocks)
+
+
+def _srt_time(seconds: int) -> str:
+    return f"00:00:{seconds:02d},000"

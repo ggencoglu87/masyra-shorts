@@ -68,7 +68,7 @@ Mevcut surum her trend icin su dosyalari hazirlar:
 - `video-plan.json`
 - `upload-metadata.json`
 
-FFmpeg varsa sistem her paket icin gercek `final.mp4` uretir. Varsayilan final video suresi 25 saniyedir. `--quick-preview` modu 15 saniyelik daha dusuk cozunurluklu `preview.mp4` uretir. FFmpeg yoksa script, voiceover, altyazi ve metadata uretimi devam eder; summary icinde net uyari doner.
+FFmpeg varsa sistem her paket icin temiz dikey Shorts layout ile `final.mp4` uretir. Varsayilan final video suresi 25 saniyedir. `--render` artik otomatik olarak 12 saniyelik `preview.mp4` ve thumbnail da uretir. `--preview-only` yalnizca hizli preview ve thumbnail uretir. FFmpeg yoksa script, voiceover, altyazi ve metadata uretimi devam eder; summary icinde net uyari doner.
 
 ElevenLabs varsayilan TTS provider'dir. `ELEVENLABS_API_KEY` varsa `voiceover.mp3` uretilir ve FFmpeg render bunu final/preview videoya gomar. API key yoksa sistem mock fallback ile `voiceover.txt` uretmeye devam eder.
 
@@ -141,6 +141,12 @@ py -m shorts_automation.cli daily-run --sample --render
 
 ```powershell
 py -m shorts_automation.cli daily-run --sample --render --quick-preview
+```
+
+Yalnizca preview ve thumbnail uretmek:
+
+```powershell
+py -m shorts_automation.cli daily-run --sample --render --preview-only
 ```
 
 ElevenLabs varsayilan TTS provider'dir. API key yoksa mock fallback devreye girer ve ses dosyasi uretmez:

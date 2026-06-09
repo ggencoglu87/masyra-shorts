@@ -198,8 +198,12 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     status_data = store.get(video_dir)
     final_mp4 = video_dir / "final.mp4"
     preview_mp4 = video_dir / "preview.mp4"
+    voiceover_mp3 = video_dir / "voiceover.mp3"
     rel = str(video_dir.relative_to(output_dir))
     download = _download_link(output_dir, final_mp4)
+    audio_warning = ""
+    if (final_mp4.exists() or preview_mp4.exists()) and not voiceover_mp3.exists():
+        audio_warning = '<div class="warning">Silent render: voiceover.mp3 is missing. Add ElevenLabs audio and rerender for voice.</div>'
 
     return page(
         plan.get("title", "Video package"),
@@ -217,6 +221,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
         <section class="detail-grid">
           <div class="video-panel">
             <h2>Final Video</h2>
+            {audio_warning}
             {_video_html(output_dir, final_mp4, "No final.mp4 yet")}
             {download}
           </div>
@@ -385,6 +390,7 @@ def page(title: str, body: str) -> str:
         .download-link {{ margin-top: 12px; width: min(360px, 100%); }}
         pre {{ margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: #05070a; color: #dce8f7; border: 1px solid #182638; padding: 14px; border-radius: 10px; }}
         .missing, .empty {{ padding: 24px; border: 1px dashed var(--line); color: var(--muted); border-radius: 10px; background: #0b111a; }}
+        .warning {{ padding: 12px; margin: 0 0 12px; border: 1px solid color-mix(in srgb, var(--amber), transparent 35%); background: color-mix(in srgb, var(--amber), transparent 88%); color: var(--amber); border-radius: 10px; }}
         @media (max-width: 900px) {{ .summary, .cards, .detail-grid, .score-strip {{ grid-template-columns: 1fr; }} .card {{ grid-template-columns: 88px minmax(0, 1fr); }} .thumb {{ min-height: 170px; }} .controls {{ align-items: stretch; flex-direction: column; }} }}
       </style>
     </head>

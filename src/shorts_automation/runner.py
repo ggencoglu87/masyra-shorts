@@ -25,6 +25,7 @@ def run_daily(
     upload: bool = False,
     tts_provider: str = "elevenlabs",
     quick_preview: bool = False,
+    preview_only: bool = False,
 ) -> dict:
     trends = SAMPLE_TRENDS if sample else collect_live_trends(region=region, limit=limit)
     plan = build_daily_network_plan(trends=trends, channel_name=channel_name, top_n=top_n)
@@ -39,12 +40,19 @@ def run_daily(
     tts_result = synthesize_voiceovers_for_dirs(package_dirs, provider_name=tts_provider)
 
     render_result = None
+    preview_result = None
     if render:
-        render_result = render_video_dirs(
+        preview_result = render_video_dirs(
             package_dirs,
-            duration_seconds=PREVIEW_DURATION_SECONDS if quick_preview else DEFAULT_DURATION_SECONDS,
-            preview=quick_preview,
+            duration_seconds=PREVIEW_DURATION_SECONDS,
+            preview=True,
         )
+        if not preview_only:
+            render_result = render_video_dirs(
+                package_dirs,
+                duration_seconds=DEFAULT_DURATION_SECONDS,
+                preview=False,
+            )
 
     upload_result = {
         "enabled": upload,
@@ -62,11 +70,14 @@ def run_daily(
         "video_files_written": len(written_video_files),
         "tts": tts_result,
         "render_requested": render,
-        "quick_preview": quick_preview,
+        "quick_preview": quick_preview or render,
+        "preview_only": preview_only,
         "mp4_rendered": render_result["rendered_count"] if render_result else 0,
         "final_mp4_paths": render_result["outputs"] if render_result else [],
-        "thumbnail_paths": render_result["thumbnails"] if render_result else [],
-        "render_warnings": render_result["warnings"] if render_result else [],
+        "preview_mp4_rendered": preview_result["rendered_count"] if preview_result else 0,
+        "preview_mp4_paths": preview_result["outputs"] if preview_result else [],
+        "thumbnail_paths": (render_result["thumbnails"] if render_result else []) + (preview_result["thumbnails"] if preview_result else []),
+        "render_warnings": (render_result["warnings"] if render_result else []) + (preview_result["warnings"] if preview_result else []),
         "upload": upload_result,
         "mode": "sample" if sample else "live",
     }
