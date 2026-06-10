@@ -16,7 +16,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 apt-get update
-apt-get install -y python3 python3-venv python3-pip ffmpeg nginx apache2-utils certbot python3-certbot-nginx rsync
+apt-get install -y python3 python3-venv python3-pip ffmpeg nginx apache2-utils certbot python3-certbot-nginx rsync curl
 
 mkdir -p "${APP_DIR}" "${WEB_DIR}"
 
@@ -40,13 +40,15 @@ python3 -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install -e .
 
+bash "${APP_DIR}/scripts/install-piper-ubuntu.sh"
+
 mkdir -p "${APP_DIR}/outputs"
 if [[ ! -f "${APP_DIR}/.env" ]]; then
   cp "${APP_DIR}/.env.example" "${APP_DIR}/.env"
   echo "Created ${APP_DIR}/.env. Edit API keys before live runs."
 fi
 
-chmod +x "${APP_DIR}/scripts/install-ubuntu.sh" "${APP_DIR}/scripts/daily-run.sh" "${APP_DIR}/scripts/start-dashboard.sh"
+chmod +x "${APP_DIR}/scripts/install-ubuntu.sh" "${APP_DIR}/scripts/install-piper-ubuntu.sh" "${APP_DIR}/scripts/daily-run.sh" "${APP_DIR}/scripts/start-dashboard.sh"
 chown -R "${SERVICE_USER}:${SERVICE_USER}" "${APP_DIR}" "${WEB_DIR}"
 
 echo

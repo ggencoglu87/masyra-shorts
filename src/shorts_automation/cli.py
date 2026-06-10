@@ -29,7 +29,8 @@ def main(argv: list[str] | None = None) -> int:
     daily_parser.add_argument("--output-dir", default=os.getenv("SHORTS_OUTPUT_DIR", "outputs"))
     daily_parser.add_argument("--render", action="store_true", help="Render final.mp4 files with FFmpeg when available.")
     daily_parser.add_argument("--upload", action="store_true", help="Reserved for explicit YouTube upload. Disabled without OAuth integration.")
-    daily_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=["mock", "elevenlabs", "off"])
+    tts_choices = ["mock", "elevenlabs", "piper", "off"]
+    daily_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
     daily_parser.add_argument("--image-provider", default=os.getenv("IMAGE_PROVIDER", "auto"), choices=["auto", "openai", "replicate", "placeholder"])
     daily_parser.add_argument("--quick-preview", action="store_true", help="Render 15 second low-resolution preview.mp4 files.")
     daily_parser.add_argument("--preview-only", action="store_true", help="Render preview.mp4 and thumbnail only; skip final.mp4.")
@@ -39,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     render_parser.add_argument("--quick-preview", action="store_true", help="Render preview.mp4 instead of final.mp4.")
     render_parser.add_argument("--preview-only", action="store_true", help="Alias for --quick-preview.")
     render_parser.add_argument("--with-audio", action="store_true", help="Generate voiceover.mp3 before rendering when missing.")
-    render_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=["mock", "elevenlabs", "off"])
+    render_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
     render_parser.add_argument("--force-tts", action="store_true", help="Regenerate voiceover.mp3 before rendering.")
 
     visuals_parser = subparsers.add_parser("generate-visuals", help="Generate scene images from asset-prompts.json.")
@@ -51,18 +52,18 @@ def main(argv: list[str] | None = None) -> int:
     generate_parser.add_argument("--output-dir", default=os.getenv("SHORTS_OUTPUT_DIR", "outputs"))
     generate_parser.add_argument("--top-n", type=int, default=1)
     generate_parser.add_argument("--render", action="store_true")
-    generate_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=["mock", "elevenlabs", "off"])
+    generate_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
     generate_parser.add_argument("--image-provider", default=os.getenv("IMAGE_PROVIDER", "auto"), choices=["auto", "openai", "replicate", "placeholder"])
     generate_parser.add_argument("--quick-preview", action="store_true")
 
     tts_parser = subparsers.add_parser("generate-tts", help="Generate voiceover.mp3 for one video package.")
     tts_parser.add_argument("video_dir", help="Directory containing voiceover.txt.")
-    tts_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=["mock", "elevenlabs", "off"])
+    tts_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
     tts_parser.add_argument("--force", action="store_true", help="Regenerate voiceover.mp3 even when it already exists.")
 
     tts_all_parser = subparsers.add_parser("generate-tts-all", help="Generate voiceover.mp3 files for every package in a videos directory.")
     tts_all_parser.add_argument("videos_dir", help="Directory containing video package folders.")
-    tts_all_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=["mock", "elevenlabs", "off"])
+    tts_all_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
     tts_all_parser.add_argument("--force", action="store_true", help="Regenerate existing voiceover.mp3 files.")
 
     dashboard_parser = subparsers.add_parser("dashboard", help="Start the local review dashboard.")

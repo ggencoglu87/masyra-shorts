@@ -77,7 +77,9 @@ Sistem her paket icin `asset-prompts.json` uretir. Render istenirse once bu prom
 
 FFmpeg varsa sistem sahne gorsellerinden Ken Burns zoom/pan hareketli temiz dikey Shorts videolari uretir. Varsayilan final video suresi 25 saniyedir. Her sahne 2-4 saniye gosterilir, altyazilar yalnizca altta yer alir, sahne gorsellerinin ustune baslik/metin bloklari basilmaz. `--render` artik otomatik olarak 12 saniyelik `preview.mp4` ve `thumbnail.jpg` da uretir. `--preview-only` yalnizca hizli preview ve thumbnail uretir. FFmpeg yoksa script, voiceover, altyazi, metadata ve sahne gorselleri uretimi devam eder; summary icinde net uyari doner.
 
-ElevenLabs varsayilan TTS provider'dir. `ELEVENLABS_API_KEY` varsa `voiceover.mp3` uretilir ve FFmpeg render bunu final/preview videoya gomar. API key yoksa ElevenLabs cagrisi yapilmaz; sistem `voiceover.txt` ile devam eder ve `tts-result.json` icinde net uyari yazar.
+ElevenLabs opsiyonel TTS provider'dir. `TTS_PROVIDER=elevenlabs` ve `ELEVENLABS_API_KEY` varsa `voiceover.mp3` uretilir ve FFmpeg render bunu final/preview videoya gomar. API key yoksa ElevenLabs cagrisi yapilmaz; sistem `voiceover.txt` ile devam eder ve `tts-result.json` icinde net uyari yazar.
+
+Ubuntu icin ucretsiz offline fallback olarak Piper desteklenir. `TTS_PROVIDER=piper`, `PIPER_BIN` ve `PIPER_MODEL_PATH` ayarlandiginda sistem API key olmadan lokal `voiceover.mp3` uretir.
 
 Her TTS denemesi paket icinde `tts-result.json` dosyasina yazilir. `voiceover.mp3` zaten varsa sistem varsayilan olarak yeniden uretmez; yeniden uretmek icin `--force` veya render sirasinda `--force-tts` gerekir.
 
@@ -128,6 +130,8 @@ TTS_PROVIDER=elevenlabs
 ELEVENLABS_API_KEY=
 ELEVENLABS_VOICE_ID=JBFqnCBsd6RMkjVDRZzb
 ELEVENLABS_MODEL_ID=eleven_multilingual_v2
+PIPER_BIN=piper
+PIPER_MODEL_PATH=/opt/masyra-shorts/models/piper/en_US-lessac-medium.onnx
 IMAGE_PROVIDER=auto
 OPENAI_API_KEY=
 OPENAI_IMAGE_MODEL=gpt-image-1
@@ -189,6 +193,18 @@ ElevenLabs varsayilan TTS provider'dir. API key yoksa ElevenLabs cagrisi yapilma
 
 ```powershell
 py -m shorts_automation.cli daily-run --sample --render
+```
+
+Ubuntu'da Piper ile API key olmadan offline `voiceover.mp3` uretmek:
+
+```powershell
+py -m shorts_automation.cli generate-tts outputs\2026-06-09\videos\01-example --tts-provider piper
+```
+
+Piper ile tum paketler icin TTS:
+
+```powershell
+py -m shorts_automation.cli generate-tts-all outputs\2026-06-09\videos --tts-provider piper
 ```
 
 ElevenLabs ile `voiceover.mp3` uretmek:
@@ -387,11 +403,21 @@ This installs:
 - `apache2-utils`
 - `certbot`
 - `python3-certbot-nginx`
+- `curl`
+- `piper-tts` inside `/opt/masyra-shorts/.venv`
+- default Piper voice model at `/opt/masyra-shorts/models/piper/en_US-lessac-medium.onnx`
 
 Ubuntu FFmpeg check:
 
 ```bash
 ffmpeg -version
+```
+
+Piper check:
+
+```bash
+/opt/masyra-shorts/.venv/bin/piper --help
+ls -lh /opt/masyra-shorts/models/piper/en_US-lessac-medium.onnx
 ```
 
 ### 4. Configure Environment
@@ -409,8 +435,10 @@ TREND_REGION_CODE=US
 TREND_SOURCE_LIMIT=50
 TREND_TOP_N=10
 SHORTS_OUTPUT_DIR=outputs
-TTS_PROVIDER=mock
+TTS_PROVIDER=piper
 ELEVENLABS_API_KEY=
+PIPER_BIN=/opt/masyra-shorts/.venv/bin/piper
+PIPER_MODEL_PATH=/opt/masyra-shorts/models/piper/en_US-lessac-medium.onnx
 YOUTUBE_OAUTH_CLIENT_ID=
 YOUTUBE_OAUTH_CLIENT_SECRET=
 ```

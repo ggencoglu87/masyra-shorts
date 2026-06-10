@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import mimetypes
+import os
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -101,12 +102,12 @@ def serve_dashboard(output_dir: Path, host: str = "127.0.0.1", port: int = 8765)
             if action == "generate_visuals":
                 generate_visuals_for_package(video_dir, provider_name=params.get("provider", ["auto"])[0])
             elif action == "generate_tts":
-                synthesize_voiceover(video_dir, provider_name=params.get("provider", ["elevenlabs"])[0], force=False)
+                synthesize_voiceover(video_dir, provider_name=params.get("provider", [_dashboard_tts_provider()])[0], force=False)
             elif action == "rerender":
                 render_video_package(video_dir, duration_seconds=PREVIEW_DURATION_SECONDS, preview=True)
                 render_video_package(video_dir, duration_seconds=DEFAULT_DURATION_SECONDS, preview=False)
             elif action == "rerender_audio":
-                synthesize_voiceover(video_dir, provider_name=params.get("provider", ["elevenlabs"])[0], force=False)
+                synthesize_voiceover(video_dir, provider_name=params.get("provider", [_dashboard_tts_provider()])[0], force=False)
                 render_video_package(video_dir, duration_seconds=PREVIEW_DURATION_SECONDS, preview=True)
                 render_video_package(video_dir, duration_seconds=DEFAULT_DURATION_SECONDS, preview=False)
             else:
@@ -247,6 +248,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     preview_mp4 = video_dir / "preview.mp4"
     voiceover_mp3 = video_dir / "voiceover.mp3"
     tts_result = _read_json(video_dir / "tts-result.json")
+    tts_provider = tts_result.get("provider", "not generated")
     rel = str(video_dir.relative_to(output_dir))
     download = _download_link(output_dir, final_mp4)
     visual_warning = ""
@@ -298,7 +300,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
             <form class="production-actions" method="post" action="/action">
               <input type="hidden" name="dir" value="{_e(rel)}">
               <input type="hidden" name="action" value="generate_tts">
-              <input type="hidden" name="provider" value="elevenlabs">
+              <input type="hidden" name="provider" value="{_e(_dashboard_tts_provider())}">
               <button type="submit">Generate Voiceover</button>
             </form>
             <form class="production-actions" method="post" action="/action">
@@ -309,12 +311,13 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
             <form class="production-actions" method="post" action="/action">
               <input type="hidden" name="dir" value="{_e(rel)}">
               <input type="hidden" name="action" value="rerender_audio">
-              <input type="hidden" name="provider" value="elevenlabs">
+              <input type="hidden" name="provider" value="{_e(_dashboard_tts_provider())}">
               <button type="submit">Re-render With Audio</button>
             </form>
             <h2>Quick Preview</h2>
             {_video_html(output_dir, preview_mp4, "No preview.mp4 yet")}
             <h2>Voiceover Audio</h2>
+            <p class="muted">TTS provider: {_e(tts_provider)}</p>
             {_audio_html(output_dir, voiceover_mp3)}
           </div>
         </section>
@@ -602,6 +605,10 @@ def _read_json(path: Path) -> dict:
 
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def _dashboard_tts_provider() -> str:
+    return os.getenv("TTS_PROVIDER", "elevenlabs").lower()
 
 
 def slug(value: str) -> str:
