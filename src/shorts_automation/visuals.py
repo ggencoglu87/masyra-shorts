@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 MIN_SCENES = 4
-MAX_SCENES = 8
+MAX_SCENES = 6
 PLACEHOLDER_WIDTH = 720
 PLACEHOLDER_HEIGHT = 1280
 
@@ -34,7 +34,7 @@ class OpenAIImageProvider(ImageProvider):
     def __init__(self) -> None:
         self.api_key = os.getenv("OPENAI_API_KEY", "")
         self.model = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
-        self.size = os.getenv("OPENAI_IMAGE_SIZE", "1024x1536")
+        self.size = os.getenv("OPENAI_IMAGE_SIZE", "1024x1792")
 
     def available(self) -> bool:
         return bool(self.api_key)
@@ -69,7 +69,7 @@ class OpenAIImageProvider(ImageProvider):
         else:
             raise RuntimeError("OpenAI image response did not include image data.")
 
-        return {"provider": self.name, "model": self.model, "path": str(output_path)}
+        return {"provider": self.name, "model": self.model, "size": self.size, "path": str(output_path)}
 
 
 class ReplicateImageProvider(ImageProvider):
@@ -138,30 +138,59 @@ class PlaceholderImageProvider(ImageProvider):
         return {"provider": self.name, "path": str(output_path)}
 
 
-def generate_visuals_for_package(video_dir: Path, provider_name: str = "auto") -> dict:
+def generate_visuals_for_package(video_dir: Path, provider_name: str = "auto", force: bool = False) -> dict:
     video_dir = video_dir.resolve()
     prompts_path = video_dir / "asset-prompts.json"
     if not prompts_path.exists():
-        return {"video_dir": str(video_dir), "generated": 0, "warning": "asset-prompts.json not found."}
+        return _write_visual_result(video_dir, {"video_dir": str(video_dir), "generated": 0, "warning": "asset-prompts.json not found."})
 
     prompts = _read_json(prompts_path)
     scene_prompts = normalize_scene_prompts(prompts)
     provider = select_provider(provider_name)
-    fallback = PlaceholderImageProvider()
     images_dir = video_dir / "scene-images"
     images_dir.mkdir(parents=True, exist_ok=True)
+
+    if isinstance(provider, OpenAIImageProvider) and not provider.available():
+        return _write_visual_result(
+            video_dir,
+            {
+                "video_dir": str(video_dir),
+                "generated": 0,
+                "provider": "openai",
+                "real_visuals_ready": False,
+                "publish_ready": False,
+                "warning": "OPENAI_API_KEY is missing. OpenAI Images was not called and scene images were not generated.",
+                "warnings": ["OPENAI_API_KEY is missing. OpenAI Images was not called and scene images were not generated."],
+            },
+        )
 
     scenes = []
     warnings = []
     for index, scene in enumerate(scene_prompts, start=1):
         output_path = images_dir / f"scene-{index:02d}.png"
+        if output_path.exists() and not force:
+            warnings.append(f"Scene {index}: {output_path.name} already exists; use --force to overwrite.")
+            used_provider = _existing_scene_provider(video_dir, index) or "existing"
+            scenes.append(
+                {
+                    "scene": index,
+                    "time": scene.get("time", ""),
+                    "duration_seconds": scene_duration(index),
+                    "prompt": scene["prompt"],
+                    "image": output_path.relative_to(video_dir).as_posix(),
+                    "provider": used_provider,
+                    "skipped": True,
+                }
+            )
+            continue
         try:
             result = provider.generate(scene["prompt"], output_path, seed=index)
             used_provider = result["provider"]
         except (RuntimeError, urllib.error.URLError, TimeoutError) as exc:
-            warnings.append(f"Scene {index}: {provider.name} failed, placeholder used. {exc}")
-            fallback.generate(scene["prompt"], output_path, seed=index)
-            used_provider = fallback.name
+            if provider.name == "placeholder":
+                raise
+            warnings.append(f"Scene {index}: {provider.name} failed. No placeholder was generated for explicit provider. {exc}")
+            continue
 
         scenes.append(
             {
@@ -179,28 +208,39 @@ def generate_visuals_for_package(video_dir: Path, provider_name: str = "auto") -
     if thumbnail_source and thumbnail_source.exists():
         shutil.copyfile(thumbnail_source, thumbnail_path)
 
+    providers_used = sorted({scene.get("provider", "") for scene in scenes if scene.get("provider")})
+    real_visuals_ready = len(scenes) >= MIN_SCENES and "openai" in providers_used and "placeholder" not in providers_used
+    publish_ready = real_visuals_ready
+    if "placeholder" in providers_used:
+        warnings.append("Placeholder visuals only — not ready for publishing.")
+
     manifest = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "provider_requested": provider_name,
         "provider_selected": provider.name,
         "scene_count": len(scenes),
         "thumbnail": "thumbnail.jpg" if thumbnail_path.exists() else None,
+        "real_visuals_ready": real_visuals_ready,
+        "publish_ready": publish_ready,
         "scenes": scenes,
         "warnings": warnings,
     }
     (video_dir / "scene-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    return {
+    return _write_visual_result(video_dir, {
         "video_dir": str(video_dir),
         "generated": len(scenes),
         "provider": provider.name,
+        "providers_used": providers_used,
+        "real_visuals_ready": real_visuals_ready,
+        "publish_ready": publish_ready,
         "thumbnail": str(thumbnail_path) if thumbnail_path.exists() else None,
         "warnings": warnings,
-    }
+    })
 
 
-def generate_visuals_for_dirs(video_dirs: list[Path], provider_name: str = "auto") -> dict:
-    results = [generate_visuals_for_package(path, provider_name=provider_name) for path in video_dirs]
+def generate_visuals_for_dirs(video_dirs: list[Path], provider_name: str = "auto", force: bool = False) -> dict:
+    results = [generate_visuals_for_package(path, provider_name=provider_name, force=force) for path in video_dirs]
     return {
         "attempted": len(video_dirs),
         "generated_count": sum(result.get("generated", 0) for result in results),
@@ -218,6 +258,13 @@ def visuals_available(video_dir: Path) -> bool:
 
 def load_scene_manifest(video_dir: Path) -> dict:
     path = video_dir / "scene-manifest.json"
+    if not path.exists():
+        return {}
+    return _read_json(path)
+
+
+def load_visual_result(video_dir: Path) -> dict:
+    path = video_dir / "visual-result.json"
     if not path.exists():
         return {}
     return _read_json(path)
@@ -267,10 +314,28 @@ def select_provider(provider_name: str) -> ImageProvider:
     openai = OpenAIImageProvider()
     if openai.available():
         return openai
-    replicate = ReplicateImageProvider()
-    if replicate.available():
-        return replicate
     return PlaceholderImageProvider()
+
+
+def default_visual_provider() -> str:
+    return os.getenv("VISUAL_PROVIDER") or os.getenv("IMAGE_PROVIDER", "auto")
+
+
+def _existing_scene_provider(video_dir: Path, scene_index: int) -> str | None:
+    manifest = load_scene_manifest(video_dir)
+    for scene in manifest.get("scenes", []):
+        if scene.get("scene") == scene_index:
+            return scene.get("provider")
+    return None
+
+
+def _write_visual_result(video_dir: Path, result: dict) -> dict:
+    result = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        **result,
+    }
+    (video_dir / "visual-result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return result
 
 
 def write_placeholder_png(path: Path, *, prompt: str, seed: int) -> None:

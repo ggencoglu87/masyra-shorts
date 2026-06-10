@@ -70,10 +70,9 @@ Mevcut surum her trend icin su dosyalari hazirlar:
 
 Sistem her paket icin `asset-prompts.json` uretir. Render istenirse once bu promptlardan 4-8 adet sahne gorseli uretilir:
 
-- `IMAGE_PROVIDER=auto`: once OpenAI Images, sonra Replicate, sonra local placeholder fallback.
-- `IMAGE_PROVIDER=openai`: `OPENAI_API_KEY` ile OpenAI Images kullanir.
-- `IMAGE_PROVIDER=replicate`: `REPLICATE_API_TOKEN` ve `REPLICATE_IMAGE_VERSION` ile Replicate kullanir.
-- `IMAGE_PROVIDER=placeholder`: API olmadan yerel sahne PNG'leri uretir.
+- `VISUAL_PROVIDER=openai`: `OPENAI_API_KEY` ile OpenAI Images kullanir ve publish-ready sahne gorselleri uretir.
+- `VISUAL_PROVIDER=auto`: OpenAI key varsa OpenAI Images, yoksa local placeholder fallback kullanir.
+- `VISUAL_PROVIDER=placeholder`: API olmadan yerel sahne PNG'leri uretir. Bu gorseller sadece test icindir; dashboard "Placeholder visuals only — not ready for publishing." uyarisi gosterir.
 
 FFmpeg varsa sistem sahne gorsellerinden Ken Burns zoom/pan hareketli temiz dikey Shorts videolari uretir. Varsayilan final video suresi 25 saniyedir. Her sahne 2-4 saniye gosterilir, altyazilar yalnizca altta yer alir, sahne gorsellerinin ustune baslik/metin bloklari basilmaz. `--render` artik otomatik olarak 12 saniyelik `preview.mp4` ve `thumbnail.jpg` da uretir. `--preview-only` yalnizca hizli preview ve thumbnail uretir. FFmpeg yoksa script, voiceover, altyazi, metadata ve sahne gorselleri uretimi devam eder; summary icinde net uyari doner.
 
@@ -132,12 +131,11 @@ ELEVENLABS_VOICE_ID=JBFqnCBsd6RMkjVDRZzb
 ELEVENLABS_MODEL_ID=eleven_multilingual_v2
 PIPER_BIN=piper
 PIPER_MODEL_PATH=/opt/masyra-shorts/models/piper/en_US-lessac-medium.onnx
-IMAGE_PROVIDER=auto
+VISUAL_PROVIDER=openai
+IMAGE_PROVIDER=openai
 OPENAI_API_KEY=
 OPENAI_IMAGE_MODEL=gpt-image-1
-OPENAI_IMAGE_SIZE=1024x1536
-REPLICATE_API_TOKEN=
-REPLICATE_IMAGE_VERSION=
+OPENAI_IMAGE_SIZE=1024x1792
 YOUTUBE_OAUTH_CLIENT_ID=
 YOUTUBE_OAUTH_CLIENT_SECRET=
 ```
@@ -169,12 +167,11 @@ $env:OPENAI_API_KEY="your_key_here"
 py -m shorts_automation.cli daily-run --sample --render --image-provider openai
 ```
 
-Replicate ile sahne gorselleri uretmek:
+OpenAI Images ile tek paket icin sahne gorselleri uretmek:
 
 ```powershell
-$env:REPLICATE_API_TOKEN="your_token_here"
-$env:REPLICATE_IMAGE_VERSION="your_model_version_here"
-py -m shorts_automation.cli daily-run --sample --render --image-provider replicate
+$env:OPENAI_API_KEY="your_key_here"
+py -m shorts_automation.cli generate-visuals outputs\2026-06-09\videos\01-example --image-provider openai
 ```
 
 15 saniyelik hizli preview render:
@@ -250,10 +247,22 @@ Var olan tek paket icin sahne gorselleri uretmek:
 py -m shorts_automation.cli generate-visuals outputs\2026-06-09\videos\01-example --image-provider placeholder
 ```
 
-Var olan video klasorundeki tum paketler icin sahne gorselleri uretmek:
+Var olan video klasorundeki tum paketler icin OpenAI sahne gorselleri uretmek:
 
 ```powershell
-py -m shorts_automation.cli generate-visuals outputs\2026-06-09\videos --image-provider auto
+py -m shorts_automation.cli generate-visuals-all outputs\2026-06-09\videos --image-provider openai
+```
+
+Var olan sahne gorsellerini bilincli olarak yeniden uretmek:
+
+```powershell
+py -m shorts_automation.cli generate-visuals outputs\2026-06-09\videos\01-example --image-provider openai --force
+```
+
+Render oncesi gorsel uretmeyi denemek:
+
+```powershell
+py -m shorts_automation.cli render-video outputs\2026-06-09\videos\01-example --with-visuals --image-provider openai
 ```
 
 Canli kaynaklarla gunluk calisma:
@@ -332,7 +341,8 @@ Her gun icin `outputs/YYYY-MM-DD/` altinda:
 - `videos/01-.../thumbnail.jpg`
 - `videos/01-.../preview-thumbnail.jpg`
 - `videos/01-.../scene-manifest.json`
-- `videos/01-.../scene-images/scene-01.png` ile baslayan 4-8 sahne gorseli
+- `videos/01-.../visual-result.json`
+- `videos/01-.../scene-images/scene-01.png` ile baslayan 4-6 sahne gorseli
 - `videos/01-.../voiceover.mp3` ElevenLabs TTS basariliysa uretilen ses
 - `videos/01-.../tts-result.json`
 - `videos/01-.../asset-prompts.json`

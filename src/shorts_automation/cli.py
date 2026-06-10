@@ -11,7 +11,7 @@ from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render
 from .runner import run_daily
 from .sample_data import SAMPLE_TRENDS
 from .tts import synthesize_voiceover, synthesize_voiceovers
-from .visuals import generate_visuals_for_dirs, generate_visuals_for_package
+from .visuals import default_visual_provider, generate_visuals_for_dirs, generate_visuals_for_package
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,7 +31,8 @@ def main(argv: list[str] | None = None) -> int:
     daily_parser.add_argument("--upload", action="store_true", help="Reserved for explicit YouTube upload. Disabled without OAuth integration.")
     tts_choices = ["mock", "elevenlabs", "piper", "off"]
     daily_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
-    daily_parser.add_argument("--image-provider", default=os.getenv("IMAGE_PROVIDER", "auto"), choices=["auto", "openai", "replicate", "placeholder"])
+    visual_choices = ["auto", "openai", "placeholder"]
+    daily_parser.add_argument("--image-provider", default=default_visual_provider(), choices=visual_choices)
     daily_parser.add_argument("--quick-preview", action="store_true", help="Render 15 second low-resolution preview.mp4 files.")
     daily_parser.add_argument("--preview-only", action="store_true", help="Render preview.mp4 and thumbnail only; skip final.mp4.")
 
@@ -40,12 +41,21 @@ def main(argv: list[str] | None = None) -> int:
     render_parser.add_argument("--quick-preview", action="store_true", help="Render preview.mp4 instead of final.mp4.")
     render_parser.add_argument("--preview-only", action="store_true", help="Alias for --quick-preview.")
     render_parser.add_argument("--with-audio", action="store_true", help="Generate voiceover.mp3 before rendering when missing.")
+    render_parser.add_argument("--with-visuals", action="store_true", help="Generate scene images before rendering when missing.")
+    render_parser.add_argument("--image-provider", default=default_visual_provider(), choices=visual_choices)
+    render_parser.add_argument("--force-visuals", action="store_true", help="Regenerate existing scene images before rendering.")
     render_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
     render_parser.add_argument("--force-tts", action="store_true", help="Regenerate voiceover.mp3 before rendering.")
 
     visuals_parser = subparsers.add_parser("generate-visuals", help="Generate scene images from asset-prompts.json.")
-    visuals_parser.add_argument("video_dir", help="Video package directory or a videos root containing packages.")
-    visuals_parser.add_argument("--image-provider", default=os.getenv("IMAGE_PROVIDER", "auto"), choices=["auto", "openai", "replicate", "placeholder"])
+    visuals_parser.add_argument("video_dir", help="Video package directory containing asset-prompts.json.")
+    visuals_parser.add_argument("--image-provider", default=default_visual_provider(), choices=visual_choices)
+    visuals_parser.add_argument("--force", action="store_true", help="Overwrite existing scene images.")
+
+    visuals_all_parser = subparsers.add_parser("generate-visuals-all", help="Generate scene images for every package in a videos directory.")
+    visuals_all_parser.add_argument("videos_dir", help="Directory containing video package folders.")
+    visuals_all_parser.add_argument("--image-provider", default=default_visual_provider(), choices=visual_choices)
+    visuals_all_parser.add_argument("--force", action="store_true", help="Overwrite existing scene images.")
 
     generate_parser = subparsers.add_parser("generate-video", help="Generate sample video packages and optionally render them.")
     generate_parser.add_argument("--channel-name", default=os.getenv("CHANNEL_NAME", "Masyra Labs"))
@@ -53,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     generate_parser.add_argument("--top-n", type=int, default=1)
     generate_parser.add_argument("--render", action="store_true")
     generate_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
-    generate_parser.add_argument("--image-provider", default=os.getenv("IMAGE_PROVIDER", "auto"), choices=["auto", "openai", "replicate", "placeholder"])
+    generate_parser.add_argument("--image-provider", default=default_visual_provider(), choices=visual_choices)
     generate_parser.add_argument("--quick-preview", action="store_true")
 
     tts_parser = subparsers.add_parser("generate-tts", help="Generate voiceover.mp3 for one video package.")
@@ -99,24 +109,35 @@ def main(argv: list[str] | None = None) -> int:
                 provider_name=args.tts_provider,
                 force=args.force_tts,
             )
+        visuals_result = None
+        if args.with_visuals:
+            visuals_result = generate_visuals_for_package(
+                Path(args.video_dir),
+                provider_name=args.image_provider,
+                force=args.force_visuals,
+            )
         result = render_video_package(
             Path(args.video_dir),
             duration_seconds=PREVIEW_DURATION_SECONDS if args.quick_preview or args.preview_only else DEFAULT_DURATION_SECONDS,
             preview=args.quick_preview or args.preview_only,
         )
-        print(json.dumps({"tts": tts_result, "render": result} if tts_result else result, ensure_ascii=False))
+        envelope = {"tts": tts_result, "visuals": visuals_result, "render": result}
+        print(json.dumps(envelope if tts_result or visuals_result else result, ensure_ascii=False))
         return 0 if result["rendered"] or result.get("warning") else 1
 
     if args.command == "generate-visuals":
         path = Path(args.video_dir)
-        if (path / "video-plan.json").exists():
-            result = generate_visuals_for_package(path, provider_name=args.image_provider)
-        else:
-            video_dirs = [
-                child for child in sorted(path.iterdir())
-                if child.is_dir() and (child / "video-plan.json").exists()
-            ]
-            result = generate_visuals_for_dirs(video_dirs, provider_name=args.image_provider)
+        result = generate_visuals_for_package(path, provider_name=args.image_provider, force=args.force)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+
+    if args.command == "generate-visuals-all":
+        path = Path(args.videos_dir)
+        video_dirs = [
+            child for child in sorted(path.iterdir())
+            if child.is_dir() and (child / "video-plan.json").exists()
+        ]
+        result = generate_visuals_for_dirs(video_dirs, provider_name=args.image_provider, force=args.force)
         print(json.dumps(result, ensure_ascii=False))
         return 0
 

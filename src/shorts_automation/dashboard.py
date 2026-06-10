@@ -11,7 +11,7 @@ from pathlib import Path
 from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render_video_package
 from .status_store import DEFAULT_STATUS, StatusStore, VALID_STATUSES
 from .tts import synthesize_voiceover
-from .visuals import generate_visuals_for_package, load_scene_manifest, visuals_available
+from .visuals import default_visual_provider, generate_visuals_for_package, load_scene_manifest, load_visual_result, visuals_available
 
 
 STATUS_ORDER = ["Needs Edit", "Approved", "Rejected"]
@@ -100,10 +100,14 @@ def serve_dashboard(output_dir: Path, host: str = "127.0.0.1", port: int = 8765)
                 return
 
             if action == "generate_visuals":
-                generate_visuals_for_package(video_dir, provider_name=params.get("provider", ["auto"])[0])
+                generate_visuals_for_package(video_dir, provider_name=params.get("provider", [default_visual_provider()])[0], force=False)
             elif action == "generate_tts":
                 synthesize_voiceover(video_dir, provider_name=params.get("provider", [_dashboard_tts_provider()])[0], force=False)
             elif action == "rerender":
+                render_video_package(video_dir, duration_seconds=PREVIEW_DURATION_SECONDS, preview=True)
+                render_video_package(video_dir, duration_seconds=DEFAULT_DURATION_SECONDS, preview=False)
+            elif action == "rerender_visuals":
+                generate_visuals_for_package(video_dir, provider_name=params.get("provider", [default_visual_provider()])[0], force=False)
                 render_video_package(video_dir, duration_seconds=PREVIEW_DURATION_SECONDS, preview=True)
                 render_video_package(video_dir, duration_seconds=DEFAULT_DURATION_SECONDS, preview=False)
             elif action == "rerender_audio":
@@ -243,6 +247,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     upload = _read_json(video_dir / "upload-metadata.json")
     prompts = _read_json(video_dir / "asset-prompts.json")
     manifest = load_scene_manifest(video_dir)
+    visual_result = load_visual_result(video_dir)
     status_data = store.get(video_dir)
     final_mp4 = video_dir / "final.mp4"
     preview_mp4 = video_dir / "preview.mp4"
@@ -254,6 +259,8 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     visual_warning = ""
     if not visuals_available(video_dir):
         visual_warning = '<div class="visual-warning">VISUALS NOT GENERATED</div>'
+    elif _placeholder_visuals(manifest, visual_result):
+        visual_warning = '<div class="visual-warning">Placeholder visuals only — not ready for publishing.</div>'
     audio_warning = ""
     if (final_mp4.exists() or preview_mp4.exists()) and not voiceover_mp3.exists():
         audio_warning = '<div class="warning">Silent render: voiceover.mp3 is missing. Add ElevenLabs audio and rerender for voice.</div>'
@@ -294,7 +301,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
             <form class="production-actions" method="post" action="/action">
               <input type="hidden" name="dir" value="{_e(rel)}">
               <input type="hidden" name="action" value="generate_visuals">
-              <input type="hidden" name="provider" value="auto">
+              <input type="hidden" name="provider" value="{_e(default_visual_provider())}">
               <button type="submit">Generate Visuals</button>
             </form>
             <form class="production-actions" method="post" action="/action">
@@ -307,6 +314,12 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
               <input type="hidden" name="dir" value="{_e(rel)}">
               <input type="hidden" name="action" value="rerender">
               <button type="submit">Re-render Video</button>
+            </form>
+            <form class="production-actions" method="post" action="/action">
+              <input type="hidden" name="dir" value="{_e(rel)}">
+              <input type="hidden" name="action" value="rerender_visuals">
+              <input type="hidden" name="provider" value="{_e(default_visual_provider())}">
+              <button type="submit">Re-render With Visuals</button>
             </form>
             <form class="production-actions" method="post" action="/action">
               <input type="hidden" name="dir" value="{_e(rel)}">
@@ -328,6 +341,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
         {score_box("Competition", plan.get("scores", {}).get("competition_score", ""))}
         </section>
         {scene_timeline(output_dir, video_dir, manifest)}
+        {file_section("visual-result.json", json.dumps(visual_result, ensure_ascii=False, indent=2))}
         {file_section("script.txt", _read_text(video_dir / "script.txt"))}
         {file_section("voiceover.txt", _read_text(video_dir / "voiceover.txt"))}
         {file_section("tts-result.json", json.dumps(tts_result, ensure_ascii=False, indent=2))}
@@ -447,10 +461,24 @@ def scene_timeline(output_dir: Path, video_dir: Path, manifest: dict) -> str:
       <div class="section-title-row">
         <h2>Scene Timeline</h2>
         <span class="pill">{len(scenes)} scenes</span>
+        <span class="pill">Provider: {_e(manifest.get("provider_selected", "unknown"))}</span>
       </div>
+      {_placeholder_warning(manifest)}
       <div class="timeline-grid">{''.join(cards)}</div>
     </section>
     """
+
+
+def _placeholder_visuals(manifest: dict, visual_result: dict) -> bool:
+    providers = set(visual_result.get("providers_used", []))
+    providers.update(scene.get("provider") for scene in manifest.get("scenes", []) if scene.get("provider"))
+    return "placeholder" in providers
+
+
+def _placeholder_warning(manifest: dict) -> str:
+    if any(scene.get("provider") == "placeholder" for scene in manifest.get("scenes", [])):
+        return '<div class="visual-warning">Placeholder visuals only — not ready for publishing.</div>'
+    return ""
 
 
 def page(title: str, body: str) -> str:
