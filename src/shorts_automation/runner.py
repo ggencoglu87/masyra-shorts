@@ -6,10 +6,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .planner import build_daily_network_plan, write_video_packages
+from .quality import score_video_dirs
 from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render_video_dirs
 from .sample_data import SAMPLE_TRENDS
 from .sources import collect_live_trends
 from .status_store import StatusStore
+from .stock_videos import generate_video_clips_for_dirs
 from .tts import synthesize_voiceovers_for_dirs
 from .visuals import generate_visuals_for_dirs
 
@@ -22,14 +24,19 @@ def run_daily(
     top_n: int,
     output_dir: Path,
     channel_name: str,
+    categories: list[str] | None = None,
     render: bool = False,
     upload: bool = False,
     tts_provider: str = "elevenlabs",
     image_provider: str = "auto",
+    video_provider: str = "auto",
     quick_preview: bool = False,
     preview_only: bool = False,
 ) -> dict:
     trends = SAMPLE_TRENDS if sample else collect_live_trends(region=region, limit=limit)
+    if categories:
+        allowed = {category.strip().lower() for category in categories if category.strip()}
+        trends = [trend for trend in trends if trend.get("category", "").lower() in allowed]
     plan = build_daily_network_plan(trends=trends, channel_name=channel_name, top_n=top_n)
 
     run_dir = output_dir / datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -44,7 +51,9 @@ def run_daily(
     render_result = None
     preview_result = None
     visuals_result = None
+    clips_result = None
     if render:
+        clips_result = generate_video_clips_for_dirs(package_dirs, provider_name=video_provider)
         visuals_result = generate_visuals_for_dirs(package_dirs, provider_name=image_provider)
         preview_result = render_video_dirs(
             package_dirs,
@@ -57,6 +66,9 @@ def run_daily(
                 duration_seconds=DEFAULT_DURATION_SECONDS,
                 preview=False,
             )
+        quality_result = score_video_dirs(package_dirs)
+    else:
+        quality_result = score_video_dirs(package_dirs)
 
     upload_result = {
         "enabled": upload,
@@ -74,6 +86,8 @@ def run_daily(
         "video_files_written": len(written_video_files),
         "tts": tts_result,
         "visuals": visuals_result,
+        "video_clips": clips_result,
+        "quality": quality_result,
         "render_requested": render,
         "quick_preview": quick_preview or render,
         "preview_only": preview_only,

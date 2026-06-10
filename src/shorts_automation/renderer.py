@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from .stock_videos import load_clip_manifest, video_clips_available
 from .visuals import load_scene_manifest, visuals_available
 
 
@@ -49,6 +50,16 @@ def render_video_package(
         return _failed(video_dir, "video-plan.json not found")
 
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    clip_paths = _video_clip_paths(video_dir)
+    if len(clip_paths) >= 3:
+        return _render_clip_video(
+            video_dir=video_dir,
+            plan=plan,
+            clip_paths=clip_paths,
+            duration_seconds=duration_seconds,
+            preview=preview,
+        )
+
     visual_images = _scene_images(video_dir)
     if len(visual_images) >= 4:
         return _render_scene_video(
@@ -59,22 +70,17 @@ def render_video_package(
             preview=preview,
         )
 
-    title = clean_title(plan)
     category = plan.get("trend", {}).get("category", "Trend")
     subtitle_text = clean_subtitle_text(plan, duration_seconds)
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        title_path = Path(temp_dir) / "title.txt"
         render_subtitles_path = Path(temp_dir) / "render-subtitles.srt"
-        title_path.write_text(_wrap_text(title, 24, max_lines=2), encoding="utf-8")
         render_subtitles_path.write_text(make_render_subtitles(subtitle_text, duration_seconds), encoding="utf-8")
 
         filtergraph = ",".join(
             [
                 "format=yuv420p",
                 _draw_background_overlay(category, width, height),
-                _draw_title_filter(title_path, preview=preview),
-                _draw_brand_filter(preview=preview),
                 _subtitles_filter(render_subtitles_path, preview=preview),
             ]
         )
@@ -142,7 +148,7 @@ def render_video_package(
         "preview": preview,
         "visuals_used": False,
         "warning": _combine_warnings(
-            "VISUALS NOT GENERATED: rendered fallback background.",
+            "REAL VIDEO CLIPS AND VISUALS NOT GENERATED: rendered fallback background.",
             None if voiceover_path.exists() else "Rendered silent video: voiceover.mp3 not found.",
         ),
     }
@@ -274,6 +280,99 @@ def _render_scene_video(
     }
 
 
+def _render_clip_video(
+    *,
+    video_dir: Path,
+    plan: dict,
+    clip_paths: list[Path],
+    duration_seconds: int,
+    preview: bool,
+) -> dict:
+    voiceover_path = video_dir / "voiceover.mp3"
+    output_path = video_dir / ("preview.mp4" if preview else "final.mp4")
+    thumbnail_path = video_dir / ("preview-thumbnail.jpg" if preview else "thumbnail.jpg")
+    width = PREVIEW_WIDTH if preview else WIDTH
+    height = PREVIEW_HEIGHT if preview else HEIGHT
+    selected_clips, scene_duration = _select_scene_timing(clip_paths, duration_seconds)
+    subtitle_text = clean_subtitle_text(plan, duration_seconds)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        render_subtitles_path = Path(temp_dir) / "render-subtitles.srt"
+        render_subtitles_path.write_text(make_render_subtitles(subtitle_text, duration_seconds), encoding="utf-8")
+
+        command = ["ffmpeg", "-y"]
+        for clip_path in selected_clips:
+            command.extend(["-stream_loop", "-1", "-t", f"{scene_duration:.3f}", "-i", str(clip_path)])
+        audio_index = len(selected_clips)
+        if voiceover_path.exists():
+            command.extend(["-i", str(voiceover_path)])
+
+        filtergraph = _clip_filtergraph(
+            clip_count=len(selected_clips),
+            width=width,
+            height=height,
+            subtitles_path=render_subtitles_path,
+            preview=preview,
+        )
+        command.extend(["-filter_complex", filtergraph, "-map", "[vout]"])
+        if voiceover_path.exists():
+            command.extend(["-map", f"{audio_index}:a:0", "-c:a", "aac", "-b:a", "160k", "-shortest"])
+        command.extend(
+            [
+                "-t",
+                str(duration_seconds),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast" if preview else "medium",
+                "-crf",
+                "26" if preview else "21",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(output_path),
+            ]
+        )
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=300)
+
+    if completed.returncode != 0:
+        return {
+            "video_dir": str(video_dir),
+            "rendered": False,
+            "output": None,
+            "warning": "FFmpeg stock clip render failed.",
+            "stderr": completed.stderr[-2000:],
+            "video_clips_used": True,
+        }
+
+    thumbnail_result = _create_thumbnail(output_path, thumbnail_path)
+    return {
+        "video_dir": str(video_dir),
+        "rendered": True,
+        "output": str(output_path),
+        "thumbnail": str(thumbnail_path) if thumbnail_path.exists() else None,
+        "thumbnail_warning": thumbnail_result.get("warning"),
+        "audio_used": voiceover_path.exists(),
+        "preview": preview,
+        "video_clips_used": True,
+        "clip_count": len(selected_clips),
+        "warning": None if voiceover_path.exists() else "Rendered silent video: voiceover.mp3 not found.",
+    }
+
+
+def _video_clip_paths(video_dir: Path) -> list[Path]:
+    if not video_clips_available(video_dir):
+        return []
+    manifest = load_clip_manifest(video_dir)
+    clips = []
+    for clip in manifest.get("clips", []):
+        path = video_dir / clip.get("file", "")
+        if path.exists():
+            clips.append(path)
+    return clips[:8]
+
+
 def _scene_images(video_dir: Path) -> list[Path]:
     if not visuals_available(video_dir):
         return []
@@ -294,6 +393,28 @@ def _select_scene_timing(image_paths: list[Path], duration_seconds: int) -> tupl
     scene_duration = duration_seconds / max(len(selected), 1)
     scene_duration = max(2.0, min(4.0, scene_duration))
     return selected, scene_duration
+
+
+def _clip_filtergraph(
+    *,
+    clip_count: int,
+    width: int,
+    height: int,
+    subtitles_path: Path,
+    preview: bool,
+) -> str:
+    parts = []
+    for index in range(clip_count):
+        parts.append(
+            f"[{index}:v]"
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},"
+            f"fps={FPS},setsar=1,format=yuv420p[v{index}]"
+        )
+    concat_inputs = "".join(f"[v{index}]" for index in range(clip_count))
+    parts.append(f"{concat_inputs}concat=n={clip_count}:v=1:a=0,format=yuv420p[base]")
+    parts.append(f"[base]{_subtitles_filter(subtitles_path, preview=preview)}[vout]")
+    return ";".join(parts)
 
 
 def _scene_filtergraph(

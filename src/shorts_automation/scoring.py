@@ -18,6 +18,7 @@ def score_trend(trend: dict) -> dict:
     growth_score = _growth_score(trend)
     competition_score = _competition_score(trend)
     emotional_score = _emotional_category_score(trend.get("category", "Misc Viral"))
+    momentum_score = _clamp((growth_score * 0.62) + (source_strength * 0.28) + (emotional_score * 0.10), 0, 100)
 
     viral_potential_score = _clamp(
         (source_strength * 0.38)
@@ -32,6 +33,7 @@ def score_trend(trend: dict) -> dict:
         "trend_score": round(source_strength, 2),
         "growth_score": round(growth_score, 2),
         "competition_score": round(competition_score, 2),
+        "momentum_score": round(momentum_score, 2),
         "viral_potential_score": round(viral_potential_score, 2),
     }
 

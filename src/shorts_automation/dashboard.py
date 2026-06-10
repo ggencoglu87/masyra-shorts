@@ -8,13 +8,15 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .quality import load_quality_score, score_video_package
 from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render_video_package
 from .status_store import DEFAULT_STATUS, StatusStore, VALID_STATUSES
+from .stock_videos import default_video_provider, generate_video_clips_for_package, load_clip_manifest, video_clips_available
 from .tts import synthesize_voiceover
 from .visuals import default_visual_provider, generate_visuals_for_package, load_scene_manifest, load_visual_result, visuals_available
 
 
-STATUS_ORDER = ["Needs Edit", "Approved", "Rejected"]
+STATUS_ORDER = ["Needs Edit", "Approved", "Rejected", "Publish Ready"]
 SORT_OPTIONS = {
     "viral": ("Viral score", "viral_potential_score"),
     "trend": ("Trend score", "trend_score"),
@@ -101,19 +103,24 @@ def serve_dashboard(output_dir: Path, host: str = "127.0.0.1", port: int = 8765)
 
             if action == "generate_visuals":
                 generate_visuals_for_package(video_dir, provider_name=params.get("provider", [default_visual_provider()])[0], force=False)
+            elif action == "generate_clips":
+                generate_video_clips_for_package(video_dir, provider_name=params.get("provider", [default_video_provider()])[0], force=False)
             elif action == "generate_tts":
                 synthesize_voiceover(video_dir, provider_name=params.get("provider", [_dashboard_tts_provider()])[0], force=False)
             elif action == "rerender":
                 render_video_package(video_dir, duration_seconds=PREVIEW_DURATION_SECONDS, preview=True)
                 render_video_package(video_dir, duration_seconds=DEFAULT_DURATION_SECONDS, preview=False)
+                score_video_package(video_dir)
             elif action == "rerender_visuals":
                 generate_visuals_for_package(video_dir, provider_name=params.get("provider", [default_visual_provider()])[0], force=False)
                 render_video_package(video_dir, duration_seconds=PREVIEW_DURATION_SECONDS, preview=True)
                 render_video_package(video_dir, duration_seconds=DEFAULT_DURATION_SECONDS, preview=False)
+                score_video_package(video_dir)
             elif action == "rerender_audio":
                 synthesize_voiceover(video_dir, provider_name=params.get("provider", [_dashboard_tts_provider()])[0], force=False)
                 render_video_package(video_dir, duration_seconds=PREVIEW_DURATION_SECONDS, preview=True)
                 render_video_package(video_dir, duration_seconds=DEFAULT_DURATION_SECONDS, preview=False)
+                score_video_package(video_dir)
             else:
                 self._send_text("Invalid action", status=400)
                 return
@@ -165,7 +172,9 @@ def render_index(output_dir: Path, store: StatusStore, status_filter: str = "all
     sort_label, score_key = SORT_OPTIONS.get(sort_key, SORT_OPTIONS["viral"])
     filtered = [
         package for package in packages
-        if status_filter == "all" or package["status"] == status_filter
+        if status_filter == "all"
+        or package["status"] == status_filter
+        or (status_filter == "Publish Ready" and package["publish_ready"])
     ]
     filtered.sort(key=lambda item: item["scores"].get(score_key, 0), reverse=True)
 
@@ -223,6 +232,7 @@ def render_package_card(output_dir: Path, package: dict) -> str:
           <span class="pill">{_e(package["category"])}</span>
           {visual_badge(package["visuals_ready"])}
           {audio_badge(package["audio_ready"])}
+          {clip_badge(package["clips_ready"])}
         </div>
         <h2><a href="{detail_url}">{_e(package["trend_title"])}</a></h2>
         <div class="score-grid">
@@ -247,7 +257,9 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     upload = _read_json(video_dir / "upload-metadata.json")
     prompts = _read_json(video_dir / "asset-prompts.json")
     manifest = load_scene_manifest(video_dir)
+    clip_manifest = load_clip_manifest(video_dir)
     visual_result = load_visual_result(video_dir)
+    quality = load_quality_score(video_dir)
     status_data = store.get(video_dir)
     final_mp4 = video_dir / "final.mp4"
     preview_mp4 = video_dir / "preview.mp4"
@@ -300,6 +312,12 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
             <h2>Production Actions</h2>
             <form class="production-actions" method="post" action="/action">
               <input type="hidden" name="dir" value="{_e(rel)}">
+              <input type="hidden" name="action" value="generate_clips">
+              <input type="hidden" name="provider" value="{_e(default_video_provider())}">
+              <button type="submit">Generate Video Clips</button>
+            </form>
+            <form class="production-actions" method="post" action="/action">
+              <input type="hidden" name="dir" value="{_e(rel)}">
               <input type="hidden" name="action" value="generate_visuals">
               <input type="hidden" name="provider" value="{_e(default_visual_provider())}">
               <button type="submit">Generate Visuals</button>
@@ -338,9 +356,14 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
           {score_box("Viral", plan.get("scores", {}).get("viral_potential_score", ""))}
           {score_box("Trend", plan.get("scores", {}).get("trend_score", ""))}
           {score_box("Growth", plan.get("scores", {}).get("growth_score", ""))}
+          {score_box("Momentum", plan.get("scores", {}).get("momentum_score", ""))}
         {score_box("Competition", plan.get("scores", {}).get("competition_score", ""))}
         </section>
+        {quality_section(quality)}
+        {clip_section(output_dir, video_dir, clip_manifest)}
         {scene_timeline(output_dir, video_dir, manifest)}
+        {file_section("video-clips-manifest.json", json.dumps(clip_manifest, ensure_ascii=False, indent=2))}
+        {file_section("quality-score.json", json.dumps(quality, ensure_ascii=False, indent=2))}
         {file_section("visual-result.json", json.dumps(visual_result, ensure_ascii=False, indent=2))}
         {file_section("script.txt", _read_text(video_dir / "script.txt"))}
         {file_section("voiceover.txt", _read_text(video_dir / "voiceover.txt"))}
@@ -367,6 +390,8 @@ def build_package_rows(output_dir: Path, store: StatusStore) -> list[dict]:
                 "scores": plan.get("scores", {}),
                 "visuals_ready": visuals_available(video_dir),
                 "audio_ready": (video_dir / "voiceover.mp3").exists(),
+                "clips_ready": video_clips_available(video_dir),
+                "publish_ready": bool(load_quality_score(video_dir).get("publish_ready")),
             }
         )
     return rows
@@ -410,6 +435,12 @@ def audio_badge(ready: bool) -> str:
     return '<span class="pill status-needs-edit">Voiceover Missing</span>'
 
 
+def clip_badge(ready: bool) -> str:
+    if ready:
+        return '<span class="pill status-approved">Clips Ready</span>'
+    return '<span class="pill status-needs-edit">Clips Missing</span>'
+
+
 def filter_options(current: str) -> str:
     options = [("all", "All"), *[(status, status) for status in STATUS_ORDER]]
     return "".join(
@@ -427,6 +458,55 @@ def sort_options(current: str) -> str:
 
 def file_section(title: str, content: str) -> str:
     return f'<section class="file-section"><h2>{_e(title)}</h2><pre>{_e(content)}</pre></section>'
+
+
+def quality_section(quality: dict) -> str:
+    if not quality:
+        return '<section class="score-strip"><div class="missing">No quality-score.json yet.</div></section>'
+    return f"""
+    <section class="score-strip">
+      {score_box("Retention", quality.get("retention_score", ""))}
+      {score_box("Hook", quality.get("hook_score", ""))}
+      {score_box("Visual", quality.get("visual_score", ""))}
+      {score_box("Publish", quality.get("publish_score", ""))}
+    </section>
+    """
+
+
+def clip_section(output_dir: Path, video_dir: Path, manifest: dict) -> str:
+    clips = manifest.get("clips", [])
+    if not clips:
+        return '<section class="timeline-section"><h2>Video Clips</h2><div class="visual-warning">REAL VIDEO CLIPS NOT GENERATED</div></section>'
+    cards = []
+    for clip in clips:
+        path = video_dir / clip.get("file", "")
+        media = '<div class="scene-missing">Missing clip</div>'
+        if path.exists():
+            media_url = "/media?path=" + urllib.parse.quote(str(path.relative_to(output_dir)))
+            media = f'<video controls muted preload="metadata" class="scene-image" src="{media_url}"></video>'
+        cards.append(
+            f"""
+            <article class="scene-card">
+              {media}
+              <div class="scene-body">
+                <div class="scene-meta">
+                  <span>{_e(clip.get("provider", ""))}</span>
+                  <span>{_e(clip.get("query", ""))}</span>
+                </div>
+                <p>{_e(clip.get("url", ""))}</p>
+              </div>
+            </article>
+            """
+        )
+    return f"""
+    <section class="timeline-section">
+      <div class="section-title-row">
+        <h2>Video Clips</h2>
+        <span class="pill">Provider: {_e(manifest.get("provider", "unknown"))}</span>
+      </div>
+      <div class="timeline-grid">{''.join(cards)}</div>
+    </section>
+    """
 
 
 def scene_timeline(output_dir: Path, video_dir: Path, manifest: dict) -> str:

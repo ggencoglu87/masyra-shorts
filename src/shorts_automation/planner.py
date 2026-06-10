@@ -46,7 +46,20 @@ def make_content_item(trend: dict, rank: int, channel_name: str) -> dict:
             "trend_score": trend["trend_score"],
             "growth_score": trend["growth_score"],
             "competition_score": trend["competition_score"],
+            "momentum_score": trend["momentum_score"],
             "viral_potential_score": trend["viral_potential_score"],
+        },
+        "trend_intelligence": explain_trend(trend),
+        "content_strategy": {
+            "hook": f"The hidden detail behind this {trend['category'].lower()} trend.",
+            "story_structure": "hook -> context -> surprising turn -> fast payoff -> comment question",
+            "retention_plan": [
+                "Open with a curiosity gap in the first 2 seconds.",
+                "Change visual energy every 2-4 seconds.",
+                "Reveal the strongest detail after the midpoint.",
+                "End on a question that feels natural to answer.",
+            ],
+            "cta": "Ask one direct question tied to the story.",
         },
         "creative_rules": [
             "Do not copy trend videos.",
@@ -54,16 +67,17 @@ def make_content_item(trend: dict, rank: int, channel_name: str) -> dict:
             "Use only the theme, public facts, and original commentary.",
         ],
         "title": title,
-        "description": f"{channel_name} original short inspired by the trend theme: {topic}.",
+        "description": f"Original YouTube Short inspired by the trending theme: {topic}.",
         "script": script,
         "narration": narration,
         "hashtags": hashtags,
         "production": {
             "format": "vertical 9:16",
-            "duration_target_seconds": 42,
+            "duration_target_seconds": 28,
             "visual_style": visual_style_for_category(trend["category"]),
-            "asset_policy": "Use generated visuals, licensed stock, public-domain material, or original screen graphics only.",
+            "asset_policy": "Use licensed stock video first, then generated visuals, public-domain material, or original graphics only.",
         },
+        "copyright_safe": True,
     }
 
 
@@ -115,32 +129,32 @@ def make_asset_prompts(item: dict) -> dict:
             {
                 "scene": 1,
                 "time": "0-3s",
-                "type": "image_or_motion_background",
-                "prompt": f"Vertical 9:16 hook visual for {category}: abstract viral trend energy, bold empty space for captions, {style}. No logos, no celebrities, no copyrighted footage.",
+                "type": "stock_video_or_generated_image",
+                "prompt": f"Vertical 9:16 hook visual for {category}: real movement, emotion, fast attention, {style}. No logos, no celebrities, no copyrighted footage.",
             },
             {
                 "scene": 2,
                 "time": "3-12s",
-                "type": "explainer_visual",
-                "prompt": f"Original explainer graphic about the theme '{topic}', simple shapes, clean information design, vertical composition, no copied source imagery.",
+                "type": "stock_video_or_generated_image",
+                "prompt": f"Original visual about the theme '{topic}', people reacting, action, suspense, vertical composition, no copied source imagery.",
             },
             {
                 "scene": 3,
                 "time": "12-25s",
-                "type": "supporting_visual",
-                "prompt": f"Original visual metaphor showing why a {category} trend spreads quickly, kinetic text-friendly layout, licensed or generated look.",
+                "type": "stock_video_or_generated_image",
+                "prompt": f"Visual metaphor showing why a {category} trend spreads quickly, kinetic movement, human emotion, licensed stock or generated look.",
             },
             {
                 "scene": 4,
                 "time": "25-38s",
-                "type": "brand_take_visual",
-                "prompt": "Masyra Labs analysis moment, sleek vertical dashboard style, trend score cards, subtle motion graphics, no third-party marks.",
+                "type": "stock_video_or_generated_image",
+                "prompt": "Fast story turn moment, close-up reaction, mystery reveal energy, no third-party marks.",
             },
             {
                 "scene": 5,
                 "time": "38-45s",
-                "type": "cta_visual",
-                "prompt": "Clean vertical end card with room for a short question, Masyra Labs brand text, high contrast, no copyrighted media.",
+                "type": "stock_video_or_generated_image",
+                "prompt": "Final reaction shot that invites comments, high contrast, emotional, no brand text, no copyrighted media.",
             },
         ],
     }
@@ -161,17 +175,29 @@ def make_copyright_checklist(item: dict) -> dict:
         ],
         "creative_basis": item["creative_rules"],
         "asset_policy": item["production"]["asset_policy"],
+        "copyright_safe": item.get("copyright_safe", False),
+        "source_metadata": item["trend"].get("sources", []),
+    }
+
+
+def explain_trend(trend: dict) -> dict:
+    category = trend.get("category", "viral")
+    sources = ", ".join(trend.get("sources", [])) or "trend signals"
+    return {
+        "why_trending": f"It is gaining attention across {sources}, with enough velocity to stand out in {category}.",
+        "why_viewers_watch": "The idea is simple to understand quickly, but leaves a curiosity gap that keeps viewers waiting.",
+        "why_it_might_go_viral": "It has a clear emotional trigger, easy remix potential, and a comment-friendly ending.",
     }
 
 
 def make_script(topic: str, category: str, channel_name: str) -> str:
     return "\n".join(
         [
-            f"0-3s HOOK: Everyone is talking about this {category.lower()} trend, but the real question is why it spread so fast.",
-            f"3-12s CONTEXT: The theme is {topic}. Keep the visuals original and explain the idea without copying any source video.",
-            "12-25s TURN: Point out the surprising detail, the emotional trigger, or the simple reason people keep sharing it.",
-            f"25-38s PAYOFF: Give the {channel_name} take in one clear sentence that feels useful, funny, or unexpected.",
-            "38-45s CTA: Ask a short question that invites comments without begging for engagement.",
+            f"0-3s HOOK: This {category.lower()} trend is exploding, but one detail makes it way more interesting.",
+            f"3-10s SETUP: The topic is {topic}. Explain the situation fast without copying any source video.",
+            "10-20s TURN: Reveal the emotional trigger, hidden detail, or weird reason people keep watching.",
+            "20-30s PAYOFF: End with a sharp takeaway, twist, or question that makes viewers comment.",
+            "CTA: Ask one natural question that fits the story.",
         ]
     )
 
@@ -179,10 +205,10 @@ def make_script(topic: str, category: str, channel_name: str) -> str:
 def make_narration(topic: str, category: str, channel_name: str) -> str:
     return (
         f"This {category.lower()} trend is moving fast: {topic}. "
-        "Instead of copying the viral clip, look at the pattern behind it. "
-        "People share it because it is easy to understand in one second, but it still leaves a question open. "
-        f"The {channel_name} angle is simple: turn the trend into a clean, original explanation with a stronger ending. "
-        "What part of this trend do you think made it blow up?"
+        "But the reason people keep watching is not just the clip. "
+        "It hits immediately, then leaves one question open long enough to make you wait for the answer. "
+        "That tiny gap is what turns a random moment into something people share. "
+        "Would you have stopped scrolling for this?"
     )
 
 
@@ -200,11 +226,11 @@ def make_subtitles(narration: str) -> str:
 def make_render_brief(item: dict) -> str:
     return "\n".join(
         [
-            "Render target: 1080x1920, 30fps, 35-45 seconds.",
+            "Render target: 1080x1920, 30fps, 20-45 seconds.",
             f"Category: {item['trend']['category']}",
             f"Visual style: {item['production']['visual_style']}",
             "Footage rule: no copied trend footage and no copyrighted clips.",
-            "Use generated backgrounds, kinetic text, charts, icons, simple reenactments, or licensed media.",
+            "Prioritize licensed stock video clips with motion, emotion, and action. Use generated imagery only when clips are missing.",
         ]
     )
 
@@ -239,7 +265,7 @@ def build_hashtags(topic: str, category: str) -> list[str]:
         "Movies & TV": "moviestv",
         "Misc Viral": "viral",
     }
-    seed = ["shorts", "masyralabs", "trend", category_tags.get(category, "viral")]
+    seed = ["shorts", "viral", "trend", category_tags.get(category, "viral")]
     seed.extend(re.findall(r"[A-Za-z0-9]{4,}", topic.lower())[:4])
     unique = []
     for tag in seed:

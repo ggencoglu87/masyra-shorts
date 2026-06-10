@@ -70,6 +70,8 @@ Mevcut surum her trend icin su dosyalari hazirlar:
 
 Sistem her paket icin `asset-prompts.json` uretir. Render istenirse once bu promptlardan 4-8 adet sahne gorseli uretilir:
 
+Stock video pipeline birinci onceliktir. `VIDEO_PROVIDER=auto`, `PEXELS_API_KEY` varsa Pexels Videos, yoksa `PIXABAY_API_KEY` varsa Pixabay Videos kullanir. Bulunan klipler `video-clips/` altina indirilir ve `video-clips-manifest.json` icine kaynak, query, provider ve attribution metadata yazilir. Pexels API `Authorization` header ister; Pixabay video arama API'si `key` query parametresi kullanir.
+
 - `VISUAL_PROVIDER=openai`: `OPENAI_API_KEY` ile OpenAI Images kullanir ve publish-ready sahne gorselleri uretir.
 - `VISUAL_PROVIDER=auto`: OpenAI key varsa OpenAI Images, yoksa local placeholder fallback kullanir.
 - `VISUAL_PROVIDER=placeholder`: API olmadan yerel sahne PNG'leri uretir. Bu gorseller sadece test icindir; dashboard "Placeholder visuals only — not ready for publishing." uyarisi gosterir.
@@ -125,6 +127,9 @@ TREND_REGION_CODE=US
 TREND_SOURCE_LIMIT=50
 TREND_TOP_N=10
 SHORTS_OUTPUT_DIR=outputs
+VIDEO_PROVIDER=auto
+PEXELS_API_KEY=
+PIXABAY_API_KEY=
 TTS_PROVIDER=elevenlabs
 ELEVENLABS_API_KEY=
 ELEVENLABS_VOICE_ID=JBFqnCBsd6RMkjVDRZzb
@@ -172,6 +177,18 @@ OpenAI Images ile tek paket icin sahne gorselleri uretmek:
 ```powershell
 $env:OPENAI_API_KEY="your_key_here"
 py -m shorts_automation.cli generate-visuals outputs\2026-06-09\videos\01-example --image-provider openai
+```
+
+Tek video paketi icin stock video klipleri indirmek:
+
+```powershell
+py -m shorts_automation.cli generate-video-clips outputs\2026-06-09\videos\01-example --video-provider pexels
+```
+
+Tum paketler icin stock video klipleri indirmek:
+
+```powershell
+py -m shorts_automation.cli generate-video-clips-all outputs\2026-06-09\videos --video-provider auto
 ```
 
 OpenAI hata detaylarini `visual-result.json` ve `scene-manifest.json` icine yazmak:
@@ -285,6 +302,12 @@ Render oncesi gorsel uretmeyi denemek:
 py -m shorts_automation.cli render-video outputs\2026-06-09\videos\01-example --with-visuals --image-provider openai
 ```
 
+Render oncesi stock video klipleri indirmeyi denemek:
+
+```powershell
+py -m shorts_automation.cli render-video outputs\2026-06-09\videos\01-example --with-clips --video-provider auto
+```
+
 Canli kaynaklarla gunluk calisma:
 
 ```powershell
@@ -360,11 +383,15 @@ Her gun icin `outputs/YYYY-MM-DD/` altinda:
 - `videos/01-.../preview.mp4` quick-preview modunda uretilen hizli onizleme
 - `videos/01-.../thumbnail.jpg`
 - `videos/01-.../preview-thumbnail.jpg`
+- `videos/01-.../video-clips-manifest.json`
+- `videos/01-.../video-clips-result.json`
+- `videos/01-.../video-clips/clip-01.mp4` ile baslayan lisansli stock klipler
 - `videos/01-.../scene-manifest.json`
 - `videos/01-.../visual-result.json`
 - `videos/01-.../scene-images/scene-01.png` ile baslayan 4-6 sahne gorseli
 - `videos/01-.../voiceover.mp3` ElevenLabs TTS basariliysa uretilen ses
 - `videos/01-.../tts-result.json`
+- `videos/01-.../quality-score.json`
 - `videos/01-.../asset-prompts.json`
 - `videos/01-.../copyright-checklist.json`
 - `review-status.json`
