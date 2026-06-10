@@ -44,6 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     render_parser.add_argument("--with-visuals", action="store_true", help="Generate scene images before rendering when missing.")
     render_parser.add_argument("--image-provider", default=default_visual_provider(), choices=visual_choices)
     render_parser.add_argument("--force-visuals", action="store_true", help="Regenerate existing scene images before rendering.")
+    render_parser.add_argument("--allow-placeholder", action="store_true", help="Allow placeholder fallback if OpenAI visual generation fails.")
+    render_parser.add_argument("--debug", action="store_true", help="Write debug payloads to visual-result.json.")
     render_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
     render_parser.add_argument("--force-tts", action="store_true", help="Regenerate voiceover.mp3 before rendering.")
 
@@ -51,11 +53,15 @@ def main(argv: list[str] | None = None) -> int:
     visuals_parser.add_argument("video_dir", help="Video package directory containing asset-prompts.json.")
     visuals_parser.add_argument("--image-provider", default=default_visual_provider(), choices=visual_choices)
     visuals_parser.add_argument("--force", action="store_true", help="Overwrite existing scene images.")
+    visuals_parser.add_argument("--allow-placeholder", action="store_true", help="Allow placeholder fallback if OpenAI visual generation fails.")
+    visuals_parser.add_argument("--debug", action="store_true", help="Write debug payloads to visual-result.json.")
 
     visuals_all_parser = subparsers.add_parser("generate-visuals-all", help="Generate scene images for every package in a videos directory.")
     visuals_all_parser.add_argument("videos_dir", help="Directory containing video package folders.")
     visuals_all_parser.add_argument("--image-provider", default=default_visual_provider(), choices=visual_choices)
     visuals_all_parser.add_argument("--force", action="store_true", help="Overwrite existing scene images.")
+    visuals_all_parser.add_argument("--allow-placeholder", action="store_true", help="Allow placeholder fallback if OpenAI visual generation fails.")
+    visuals_all_parser.add_argument("--debug", action="store_true", help="Write debug payloads to visual-result.json.")
 
     generate_parser = subparsers.add_parser("generate-video", help="Generate sample video packages and optionally render them.")
     generate_parser.add_argument("--channel-name", default=os.getenv("CHANNEL_NAME", "Masyra Labs"))
@@ -115,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
                 Path(args.video_dir),
                 provider_name=args.image_provider,
                 force=args.force_visuals,
+                allow_placeholder=args.allow_placeholder,
+                debug=args.debug,
             )
         result = render_video_package(
             Path(args.video_dir),
@@ -127,7 +135,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "generate-visuals":
         path = Path(args.video_dir)
-        result = generate_visuals_for_package(path, provider_name=args.image_provider, force=args.force)
+        result = generate_visuals_for_package(
+            path,
+            provider_name=args.image_provider,
+            force=args.force,
+            allow_placeholder=args.allow_placeholder,
+            debug=args.debug,
+        )
         print(json.dumps(result, ensure_ascii=False))
         return 0
 
@@ -137,7 +151,13 @@ def main(argv: list[str] | None = None) -> int:
             child for child in sorted(path.iterdir())
             if child.is_dir() and (child / "video-plan.json").exists()
         ]
-        result = generate_visuals_for_dirs(video_dirs, provider_name=args.image_provider, force=args.force)
+        result = generate_visuals_for_dirs(
+            video_dirs,
+            provider_name=args.image_provider,
+            force=args.force,
+            allow_placeholder=args.allow_placeholder,
+            debug=args.debug,
+        )
         print(json.dumps(result, ensure_ascii=False))
         return 0
 

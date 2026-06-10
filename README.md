@@ -135,7 +135,7 @@ VISUAL_PROVIDER=openai
 IMAGE_PROVIDER=openai
 OPENAI_API_KEY=
 OPENAI_IMAGE_MODEL=gpt-image-1
-OPENAI_IMAGE_SIZE=1024x1792
+OPENAI_IMAGE_SIZE=1024x1536
 YOUTUBE_OAUTH_CLIENT_ID=
 YOUTUBE_OAUTH_CLIENT_SECRET=
 ```
@@ -172,6 +172,26 @@ OpenAI Images ile tek paket icin sahne gorselleri uretmek:
 ```powershell
 $env:OPENAI_API_KEY="your_key_here"
 py -m shorts_automation.cli generate-visuals outputs\2026-06-09\videos\01-example --image-provider openai
+```
+
+OpenAI hata detaylarini `visual-result.json` ve `scene-manifest.json` icine yazmak:
+
+```powershell
+py -m shorts_automation.cli generate-visuals outputs\2026-06-09\videos\01-example --image-provider openai --debug
+```
+
+OpenAI hata verirse bilincli olarak placeholder fallback'e izin vermek:
+
+```powershell
+py -m shorts_automation.cli generate-visuals outputs\2026-06-09\videos\01-example --image-provider openai --allow-placeholder
+```
+
+Desteklenen `OPENAI_IMAGE_SIZE` degerleri:
+
+```text
+1024x1024
+1024x1536
+1536x1024
 ```
 
 15 saniyelik hizli preview render:
