@@ -72,11 +72,13 @@ def main(argv: list[str] | None = None) -> int:
     clips_parser.add_argument("video_dir", help="Video package directory containing asset-prompts.json.")
     clips_parser.add_argument("--video-provider", default=default_video_provider(), choices=["auto", "pexels", "pixabay", "off"])
     clips_parser.add_argument("--force", action="store_true", help="Overwrite existing downloaded clips.")
+    clips_parser.add_argument("--debug", action="store_true", help="Write provider HTTP error details to video-clips-result.json.")
 
     clips_all_parser = subparsers.add_parser("generate-video-clips-all", help="Download licensed stock video clips for every package in a videos directory.")
     clips_all_parser.add_argument("videos_dir", help="Directory containing video package folders.")
     clips_all_parser.add_argument("--video-provider", default=default_video_provider(), choices=["auto", "pexels", "pixabay", "off"])
     clips_all_parser.add_argument("--force", action="store_true", help="Overwrite existing downloaded clips.")
+    clips_all_parser.add_argument("--debug", action="store_true", help="Write provider HTTP error details to each video-clips-result.json.")
 
     generate_parser = subparsers.add_parser("generate-video", help="Generate sample video packages and optionally render them.")
     generate_parser.add_argument("--channel-name", default=os.getenv("CHANNEL_NAME", "Masyra Labs"))
@@ -186,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "generate-video-clips":
-        result = generate_video_clips_for_package(Path(args.video_dir), provider_name=args.video_provider, force=args.force)
+        result = generate_video_clips_for_package(Path(args.video_dir), provider_name=args.video_provider, force=args.force, debug=args.debug)
         print(json.dumps(result, ensure_ascii=False))
         return 0
 
@@ -196,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
             child for child in sorted(path.iterdir())
             if child.is_dir() and (child / "video-plan.json").exists()
         ]
-        result = generate_video_clips_for_dirs(video_dirs, provider_name=args.video_provider, force=args.force)
+        result = generate_video_clips_for_dirs(video_dirs, provider_name=args.video_provider, force=args.force, debug=args.debug)
         print(json.dumps(result, ensure_ascii=False))
         return 0
 
