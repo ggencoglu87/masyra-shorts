@@ -12,7 +12,7 @@ from .quality import load_quality_score, score_video_package
 from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render_video_package
 from .status_store import DEFAULT_STATUS, StatusStore, VALID_STATUSES
 from .stock_videos import default_video_provider, generate_video_clips_for_package, load_clip_manifest, video_clips_available
-from .tts import synthesize_voiceover
+from .tts import synthesize_voiceover, tts_status
 from .visuals import default_visual_provider, generate_visuals_for_package, load_scene_manifest, load_visual_result, visuals_available
 
 
@@ -265,6 +265,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     preview_mp4 = video_dir / "preview.mp4"
     voiceover_mp3 = video_dir / "voiceover.mp3"
     tts_result = _read_json(video_dir / "tts-result.json")
+    tts_integrity = tts_status(video_dir)
     tts_provider = tts_result.get("provider", "not generated")
     rel = str(video_dir.relative_to(output_dir))
     download = _download_link(output_dir, final_mp4)
@@ -349,6 +350,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
             {_video_html(output_dir, preview_mp4, "No preview.mp4 yet")}
             <h2>Voiceover Audio</h2>
             <p class="muted">TTS provider: {_e(tts_provider)}</p>
+            {tts_integrity_section(tts_integrity)}
             {_audio_html(output_dir, voiceover_mp3)}
           </div>
         </section>
@@ -470,6 +472,25 @@ def quality_section(quality: dict) -> str:
       {score_box("Visual", quality.get("visual_score", ""))}
       {score_box("Publish", quality.get("publish_score", ""))}
     </section>
+    """
+
+
+def tts_integrity_section(status: dict) -> str:
+    matches = status.get("audio_matches_current_text")
+    match_label = "Matches current voiceover.txt" if matches else "Does not match current voiceover.txt"
+    match_class = "status-approved" if matches else "status-needs-edit"
+    return f"""
+    <div class="tts-integrity">
+      <span class="pill {match_class}">{_e(match_label)}</span>
+      <dl>
+        <dt>Current source hash</dt>
+        <dd>{_e(status.get("source_text_hash") or "missing")}</dd>
+        <dt>Recorded source hash</dt>
+        <dd>{_e(status.get("recorded_source_text_hash") or "missing")}</dd>
+        <dt>Generated audio hash</dt>
+        <dd>{_e(status.get("generated_audio_hash") or "missing")}</dd>
+      </dl>
+    </div>
     """
 
 
@@ -634,6 +655,10 @@ def page(title: str, body: str) -> str:
         audio {{ width: min(360px, 100%); display: block; margin-bottom: 12px; }}
         .download-link {{ margin-top: 12px; width: min(360px, 100%); }}
         pre {{ margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: #05070a; color: #dce8f7; border: 1px solid #182638; padding: 14px; border-radius: 10px; }}
+        .tts-integrity {{ margin: 0 0 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #0b111a; }}
+        .tts-integrity dl {{ display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 8px 10px; margin: 10px 0 0; }}
+        .tts-integrity dt {{ color: var(--muted); font-size: 12px; }}
+        .tts-integrity dd {{ margin: 0; overflow-wrap: anywhere; font-family: Consolas, monospace; font-size: 12px; color: #dce8f7; }}
         .missing, .empty {{ padding: 24px; border: 1px dashed var(--line); color: var(--muted); border-radius: 10px; background: #0b111a; }}
         .warning {{ padding: 12px; margin: 0 0 12px; border: 1px solid color-mix(in srgb, var(--amber), transparent 35%); background: color-mix(in srgb, var(--amber), transparent 88%); color: var(--amber); border-radius: 10px; }}
         .visual-warning {{ padding: 14px; margin: 0 0 12px; border: 1px solid color-mix(in srgb, var(--red), transparent 28%); background: color-mix(in srgb, var(--red), transparent 88%); color: #ffb5bd; border-radius: 10px; font-weight: 800; letter-spacing: .08em; }}

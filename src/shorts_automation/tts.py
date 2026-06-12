@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
 import shutil
 import subprocess
 import tempfile
@@ -233,19 +234,35 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
             "provider": provider_name,
             "created": False,
             "output": None,
+            "source_text_hash": None,
+            "generated_audio_hash": _file_hash(output_path),
+            "audio_matches_current_text": False,
             "warning": "voiceover.txt not found; TTS was not attempted.",
         }
         return _write_tts_result(video_dir, result_path, result, force=force)
 
-    if output_path.exists() and not force:
+    text = voiceover_text.read_text(encoding="utf-8").strip()
+    source_text_hash = _text_hash(text)
+    previous = _read_json(result_path)
+    previous_hash = previous.get("source_text_hash")
+    audio_hash = _file_hash(output_path)
+
+    if output_path.exists() and not force and previous_hash == source_text_hash:
         result = {
-            "provider": provider_name,
+            "provider": previous.get("provider", provider_name),
             "created": False,
             "skipped": True,
             "output": str(output_path),
-            "warning": "voiceover.mp3 already exists; use --force to regenerate.",
+            "source_text_hash": source_text_hash,
+            "generated_audio_hash": audio_hash,
+            "audio_matches_current_text": True,
+            "warning": "voiceover.mp3 already matches current voiceover.txt; use --force to regenerate.",
         }
         return _write_tts_result(video_dir, result_path, result, force=force)
+
+    stale_audio_warning = None
+    if output_path.exists() and not force and previous_hash != source_text_hash:
+        stale_audio_warning = "voiceover.txt changed since voiceover.mp3 was created; regenerating audio."
 
     provider = get_tts_provider(provider_name)
     if provider is None:
@@ -253,16 +270,21 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
             "provider": "off",
             "created": False,
             "output": None,
+            "source_text_hash": source_text_hash,
+            "generated_audio_hash": audio_hash,
+            "audio_matches_current_text": output_path.exists() and previous_hash == source_text_hash,
             "warning": "TTS_PROVIDER is off; no voiceover.mp3 created.",
         }
         return _write_tts_result(video_dir, result_path, result, force=force)
 
-    text = voiceover_text.read_text(encoding="utf-8").strip()
     if not text:
         result = {
             "provider": provider.name,
             "created": False,
             "output": None,
+            "source_text_hash": source_text_hash,
+            "generated_audio_hash": audio_hash,
+            "audio_matches_current_text": False,
             "warning": "voiceover.txt is empty; TTS was not attempted.",
         }
         return _write_tts_result(video_dir, result_path, result, force=force)
@@ -277,6 +299,16 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
             "warning": f"TTS failed for {video_dir.name}: {exc}",
         }
 
+    result = {
+        "source_text_hash": source_text_hash,
+        "generated_audio_hash": _file_hash(output_path),
+        "audio_matches_current_text": bool(output_path.exists() and result.get("created")),
+        "source_text_preview": text[:240],
+        "regenerated_due_to_source_change": bool(stale_audio_warning and result.get("created")),
+        **result,
+    }
+    if stale_audio_warning and not result.get("warning"):
+        result["warning"] = stale_audio_warning
     return _write_tts_result(video_dir, result_path, result, force=force)
 
 
@@ -311,3 +343,41 @@ def _write_tts_result(video_dir: Path, result_path: Path, result: dict, *, force
     }
     result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return result
+
+
+def tts_status(video_dir: Path) -> dict:
+    voiceover_text = video_dir / "voiceover.txt"
+    output_path = video_dir / "voiceover.mp3"
+    result = _read_json(video_dir / "tts-result.json")
+    current_hash = _text_hash(voiceover_text.read_text(encoding="utf-8").strip()) if voiceover_text.exists() else None
+    recorded_hash = result.get("source_text_hash")
+    audio_hash = _file_hash(output_path)
+    return {
+        "source_text_hash": current_hash,
+        "recorded_source_text_hash": recorded_hash,
+        "generated_audio_hash": result.get("generated_audio_hash") or audio_hash,
+        "audio_matches_current_text": bool(output_path.exists() and current_hash and recorded_hash == current_hash),
+    }
+
+
+def _text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _file_hash(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
