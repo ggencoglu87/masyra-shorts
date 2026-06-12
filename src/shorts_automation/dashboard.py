@@ -18,9 +18,11 @@ from .visuals import default_visual_provider, generate_visuals_for_package, load
 
 STATUS_ORDER = ["Needs Edit", "Approved", "Rejected", "Publish Ready"]
 SORT_OPTIONS = {
-    "viral": ("Viral score", "viral_potential_score"),
+    "viral": ("Viral score", "viral_score"),
     "trend": ("Trend score", "trend_score"),
     "growth": ("Growth score", "growth_score"),
+    "hook": ("Hook score", "hook_score"),
+    "shareability": ("Shareability score", "shareability_score"),
 }
 
 
@@ -236,9 +238,10 @@ def render_package_card(output_dir: Path, package: dict) -> str:
         </div>
         <h2><a href="{detail_url}">{_e(package["trend_title"])}</a></h2>
         <div class="score-grid">
-          {score_box("Viral", scores.get("viral_potential_score", ""))}
-          {score_box("Trend", scores.get("trend_score", ""))}
-          {score_box("Growth", scores.get("growth_score", ""))}
+          {score_box("Hook", scores.get("hook_score", ""))}
+          {score_box("Viral", scores.get("viral_score", scores.get("viral_potential_score", "")))}
+          {score_box("Share", scores.get("shareability_score", ""))}
+          {score_box("Complete", scores.get("completion_probability", ""))}
         </div>
         <form class="inline-actions" method="post" action="/status">
           <input type="hidden" name="dir" value="{_e(str(video_dir.relative_to(output_dir)))}">
@@ -256,6 +259,8 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     plan = _read_json(video_dir / "video-plan.json")
     upload = _read_json(video_dir / "upload-metadata.json")
     prompts = _read_json(video_dir / "asset-prompts.json")
+    storyboard = _read_json(video_dir / "storyboard.json")
+    captions = _read_json(video_dir / "captions.json")
     manifest = load_scene_manifest(video_dir)
     clip_manifest = load_clip_manifest(video_dir)
     clip_result = load_clip_result(video_dir)
@@ -360,6 +365,10 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
         </section>
         <section class="score-strip">
           {score_box("Viral", plan.get("scores", {}).get("viral_potential_score", ""))}
+          {score_box("Viral", plan.get("scores", {}).get("viral_score", ""))}
+          {score_box("Hook", plan.get("scores", {}).get("hook_score", ""))}
+          {score_box("Shareability", plan.get("scores", {}).get("shareability_score", ""))}
+          {score_box("Completion", plan.get("scores", {}).get("completion_probability", ""))}
           {score_box("Trend", plan.get("scores", {}).get("trend_score", ""))}
           {score_box("Growth", plan.get("scores", {}).get("growth_score", ""))}
           {score_box("Momentum", plan.get("scores", {}).get("momentum_score", ""))}
@@ -367,6 +376,9 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
         </section>
         {quality_section(quality)}
         {asset_status_section(asset_status)}
+        {storyboard_section(storyboard)}
+        {captions_section(captions)}
+        {voice_profile_section(plan)}
         {clip_section(output_dir, video_dir, clip_manifest, clip_result)}
         {scene_timeline(output_dir, video_dir, manifest, asset_status)}
         {file_section("video-clips-manifest.json", json.dumps(clip_manifest, ensure_ascii=False, indent=2))}
@@ -380,6 +392,8 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
         {file_section("upload-metadata.json", json.dumps(upload, ensure_ascii=False, indent=2))}
         {file_section("render-brief.txt", _read_text(video_dir / "render-brief.txt"))}
         {file_section("asset-prompts.json", json.dumps(prompts, ensure_ascii=False, indent=2))}
+        {file_section("storyboard.json", json.dumps(storyboard, ensure_ascii=False, indent=2))}
+        {file_section("captions.json", json.dumps(captions, ensure_ascii=False, indent=2))}
         """,
     )
 
@@ -396,6 +410,7 @@ def build_package_rows(output_dir: Path, store: StatusStore) -> list[dict]:
                 "status": status,
                 "trend_title": plan.get("trend", {}).get("title", video_dir.name),
                 "category": plan.get("trend", {}).get("category", ""),
+                "channel_target": plan.get("channel_target", ""),
                 "scores": plan.get("scores", {}),
                 "visuals_ready": asset_status["visuals_ready"],
                 "audio_ready": asset_status["audio_ready"],
@@ -526,6 +541,48 @@ def asset_status_section(status: dict) -> str:
       {score_box("Video Provider", status.get("video_provider", ""))}
       {score_box("Audio Provider", status.get("audio_provider", ""))}
       {score_box("Publish Ready", "Yes" if status.get("publish_ready") else "No")}
+    </section>
+    """
+
+
+def storyboard_section(storyboard: object) -> str:
+    if not isinstance(storyboard, list) or not storyboard:
+        return '<section class="timeline-section"><h2>Storyboard</h2><div class="missing">No storyboard.json yet.</div></section>'
+    cards = []
+    for scene in storyboard:
+        cards.append(
+            f"""
+            <article class="scene-card">
+              <div class="scene-body">
+                <div class="scene-meta">
+                  <span>Scene {_e(scene.get("scene", ""))}</span>
+                  <span>{_e(scene.get("beat", ""))}</span>
+                  <span>{_e(scene.get("time", ""))}</span>
+                </div>
+                <p><strong>{_e(scene.get("caption", ""))}</strong></p>
+                <p>{_e(", ".join(scene.get("search_queries", [])))}</p>
+              </div>
+            </article>
+            """
+        )
+    return f'<section class="timeline-section"><h2>Storyboard</h2><div class="timeline-grid">{"".join(cards)}</div></section>'
+
+
+def captions_section(captions: object) -> str:
+    if not isinstance(captions, list) or not captions:
+        return '<section class="timeline-section"><h2>Captions</h2><div class="missing">No captions.json yet.</div></section>'
+    preview = " ".join(item.get("word", "") for item in captions[:24] if isinstance(item, dict))
+    return f'<section class="file-section"><h2>TikTok Captions Preview</h2><pre>{_e(preview)}</pre></section>'
+
+
+def voice_profile_section(plan: dict) -> str:
+    profile = plan.get("voice_profile", {})
+    return f"""
+    <section class="score-strip">
+      {score_box("Channel Target", plan.get("channel_target", ""))}
+      {score_box("Voice Style", profile.get("style", ""))}
+      {score_box("Voice Pace", profile.get("pace", ""))}
+      {score_box("Emotion", profile.get("emotion", ""))}
     </section>
     """
 

@@ -23,11 +23,16 @@ def score_video_package(video_dir: Path) -> dict:
     has_visuals = visuals_available(video_dir)
     visual_result = load_visual_result(video_dir)
 
-    hook_score = _hook_score(script)
+    hook_score = float(scores.get("hook_score") or _hook_score(script))
+    curiosity_score = float(scores.get("curiosity_score", hook_score))
+    payoff_score = float(scores.get("payoff_score", hook_score))
+    shareability_score = float(scores.get("shareability_score", scores.get("viral_score", 0) or 0))
+    completion_probability = float(scores.get("completion_probability", 0) or 0)
+    rewatch_probability = float(scores.get("rewatch_probability", 0) or 0)
     visual_score = 92 if has_clips else 72 if visual_result.get("real_visuals_ready") else 48 if has_visuals else 10
     audio_score = 88 if has_audio else 25
-    retention_score = min(100, round((hook_score * 0.35) + (visual_score * 0.35) + (audio_score * 0.2) + (10 if has_preview else 0), 2))
-    viral_score = float(scores.get("viral_potential_score", 0))
+    retention_score = min(100, round((completion_probability * 0.45) + (visual_score * 0.25) + (audio_score * 0.2) + (10 if has_preview else 0), 2))
+    viral_score = float(scores.get("viral_score") or scores.get("viral_potential_score", 0))
     publish_score = round((retention_score * 0.32) + (viral_score * 0.28) + (hook_score * 0.18) + (visual_score * 0.14) + (audio_score * 0.08), 2)
     publish_ready = publish_score >= PUBLISH_THRESHOLD and has_final and has_audio and (has_clips or visual_result.get("real_visuals_ready"))
 
@@ -37,6 +42,11 @@ def score_video_package(video_dir: Path) -> dict:
         "retention_score": retention_score,
         "viral_score": viral_score,
         "hook_score": hook_score,
+        "curiosity_score": curiosity_score,
+        "payoff_score": payoff_score,
+        "shareability_score": shareability_score,
+        "completion_probability": completion_probability,
+        "rewatch_probability": rewatch_probability,
         "visual_score": visual_score,
         "audio_score": audio_score,
         "publish_score": publish_score,

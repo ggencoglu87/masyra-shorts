@@ -19,12 +19,28 @@ def score_trend(trend: dict) -> dict:
     competition_score = _competition_score(trend)
     emotional_score = _emotional_category_score(trend.get("category", "Misc Viral"))
     momentum_score = _clamp((growth_score * 0.62) + (source_strength * 0.28) + (emotional_score * 0.10), 0, 100)
+    hook_score = _hook_score(trend)
+    curiosity_score = _curiosity_score(trend)
+    payoff_score = _payoff_score(trend)
+    shareability_score = _shareability_score(trend, emotional_score)
+    completion_probability = _clamp((hook_score * 0.30) + (curiosity_score * 0.24) + (payoff_score * 0.24) + (emotional_score * 0.22), 0, 100)
+    rewatch_probability = _clamp((payoff_score * 0.42) + (shareability_score * 0.34) + (hook_score * 0.24), 0, 100)
 
     viral_potential_score = _clamp(
         (source_strength * 0.38)
         + (growth_score * 0.27)
         + ((100 - competition_score) * 0.18)
         + (emotional_score * 0.17),
+        0,
+        100,
+    )
+    viral_score = _clamp(
+        (hook_score * 0.20)
+        + (curiosity_score * 0.18)
+        + (payoff_score * 0.18)
+        + (shareability_score * 0.18)
+        + (completion_probability * 0.16)
+        + (rewatch_probability * 0.10),
         0,
         100,
     )
@@ -35,6 +51,14 @@ def score_trend(trend: dict) -> dict:
         "competition_score": round(competition_score, 2),
         "momentum_score": round(momentum_score, 2),
         "viral_potential_score": round(viral_potential_score, 2),
+        "hook_score": round(hook_score, 2),
+        "curiosity_score": round(curiosity_score, 2),
+        "payoff_score": round(payoff_score, 2),
+        "shareability_score": round(shareability_score, 2),
+        "completion_probability": round(completion_probability, 2),
+        "rewatch_probability": round(rewatch_probability, 2),
+        "viral_score": round(viral_score, 2),
+        "publish_ready": viral_score >= 72 and completion_probability >= 70,
     }
 
 
@@ -63,18 +87,48 @@ def _competition_score(trend: dict) -> float:
 
 def _emotional_category_score(category: str) -> float:
     scores = {
-        "Sports": 76,
+        "Funny Animals": 92,
+        "Funny Kids": 88,
+        "Funny Fails": 90,
         "Horror Stories": 88,
-        "Funny Kids": 82,
-        "Viral News": 74,
-        "Gaming": 78,
-        "AI": 80,
-        "Celebrity": 77,
-        "Animals": 84,
-        "Movies & TV": 72,
-        "Misc Viral": 68,
+        "Reddit Stories": 84,
+        "Sports Drama": 86,
+        "Relationship Stories": 89,
+        "Minecraft Stories": 83,
+        "Motivational Stories": 82,
+        "Celebrity Drama": 86,
+        "Survival Stories": 90,
+        "Crazy Facts": 85,
     }
-    return scores.get(category, 68)
+    return scores.get(category, 78)
+
+
+def _hook_score(trend: dict) -> float:
+    title = trend.get("title", "").lower()
+    category = trend.get("category", "")
+    trigger = 14 if any(word in title for word in ["shocks", "mistake", "secret", "caught", "fails", "unexpected", "viral"]) else 0
+    category_boost = _emotional_category_score(category) * 0.55
+    return _clamp(38 + category_boost + trigger, 0, 100)
+
+
+def _curiosity_score(trend: dict) -> float:
+    title = trend.get("title", "").lower()
+    mystery = 18 if any(word in title for word in ["why", "then", "camera", "secret", "mystery", "story"]) else 8
+    low_competition = (100 - _competition_score(trend)) * 0.24
+    return _clamp(45 + mystery + low_competition, 0, 100)
+
+
+def _payoff_score(trend: dict) -> float:
+    category = trend.get("category", "")
+    payoff_categories = {"Funny Animals", "Funny Fails", "Horror Stories", "Sports Drama", "Survival Stories", "Crazy Facts"}
+    base = 78 if category in payoff_categories else 70
+    return _clamp(base + min(len(trend.get("evidence", [])) * 4, 10), 0, 100)
+
+
+def _shareability_score(trend: dict, emotional_score: float) -> float:
+    comments = min(trend.get("reddit_ups", 0) / 1000, 28)
+    likes = min(trend.get("youtube_likes", 0) / 5000, 24)
+    return _clamp(35 + (emotional_score * 0.28) + comments + likes, 0, 100)
 
 
 def _age_hours(value: str) -> float:

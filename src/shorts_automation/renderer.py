@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .stock_videos import load_clip_manifest, video_clips_available
+from .stock_videos import load_clip_manifest, load_clip_result, video_clips_available
 from .visuals import load_scene_manifest, visuals_available
 
 
@@ -364,7 +364,7 @@ def _render_clip_video(
 def _video_clip_paths(video_dir: Path) -> list[Path]:
     if not video_clips_available(video_dir):
         return []
-    manifest = load_clip_manifest(video_dir)
+    manifest = load_clip_result(video_dir) or load_clip_manifest(video_dir)
     clips = []
     for clip in manifest.get("clips", []):
         path = video_dir / clip.get("file", "")
@@ -557,8 +557,8 @@ def _draw_brand_filter(preview: bool = False) -> str:
 
 
 def _subtitles_filter(subtitles_path: Path, preview: bool = False) -> str:
-    fontsize = 13 if preview else 16
-    margin_v = 84 if preview else 170
+    fontsize = 28 if preview else 46
+    margin_v = 96 if preview else 190
     return (
         "subtitles="
         f"filename='{_ffmpeg_path(subtitles_path)}':"
@@ -630,9 +630,9 @@ def clean_subtitle_text(plan: dict, duration_seconds: int) -> str:
     narration = re.sub(r"^This [^.]+ trend is moving fast:\s*\.?\s*", "", narration, flags=re.IGNORECASE)
     narration = narration.strip()
     if not narration:
-        narration = "A quick original Masyra Labs breakdown of why this trend is moving."
+        narration = "Nobody expected this. Then everything changed."
     words = narration.split()
-    max_words = 38 if duration_seconds <= PREVIEW_DURATION_SECONDS else 70
+    max_words = 28 if duration_seconds <= PREVIEW_DURATION_SECONDS else 72
     return " ".join(words[:max_words])
 
 
@@ -640,7 +640,7 @@ def make_render_subtitles(text: str, duration_seconds: int) -> str:
     words = text.split()
     if not words:
         return ""
-    chunk_size = 7
+    chunk_size = 1
     chunks = [" ".join(words[index:index + chunk_size]) for index in range(0, len(words), chunk_size)]
     max_chunks = 3 if duration_seconds <= PREVIEW_DURATION_SECONDS else 5
     chunks = chunks[:max_chunks]

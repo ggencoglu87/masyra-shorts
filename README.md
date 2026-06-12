@@ -1,8 +1,45 @@
-# Masyra Labs Trend-Following Shorts Network
+# Masyra Viral Shorts Engine v3
 
-Masyra Labs artik kategori bazli tek kaynakli Shorts planlayici degil, cok kaynakli bir trend-following Shorts network iskeletidir.
+Masyra Labs artik generic trend-news videolari ureten bir sistem degil; YouTube Shorts, TikTok ve Instagram Reels icin eglence odakli viral Shorts studio iskeletidir.
 
-Sistem gunluk trend sinyallerini toplar, kategorilere ayirir, puanlar, en iyi 10 trendi secer ve her biri icin ozgun Shorts paketi hazirlar.
+Ana hedef: watch time, completion rate, share, repeat view. Her karar su soruya gore degerlendirilir: "Birisi scroll'u durdurup bunu izler mi?"
+
+## V3 Entertainment Categories
+
+- Funny Animals
+- Funny Kids
+- Funny Fails
+- Horror Stories
+- Reddit Stories
+- Sports Drama
+- Relationship Stories
+- Minecraft Stories
+- Motivational Stories
+- Celebrity Drama
+- Survival Stories
+- Crazy Facts
+
+Her kategori kendi story style, voice profile, channel target ve scene search query seti ile uretilir. Eski "This trend is moving fast..." sablonu kaldirildi.
+
+## V3 Viral Structure
+
+Her video 20-30 saniyelik viral story beat yapisini takip eder:
+
+- `Hook (0-3s)`: curiosity trigger
+- `Curiosity (3-10s)`: conflict setup
+- `Escalation (10-20s)`: tension increase
+- `Twist (20-26s)`: unexpected turn
+- `Payoff (26-30s)`: reveal, laugh, scare, emotion, or comment trigger
+
+Her paket artik ek olarak sunlari uretir:
+
+- `storyboard.json`: scene, beat, time, caption, visual prompt, stock search queries
+- `captions.json`: TikTok-style word-by-word caption timing
+- `voice_profile` metadata: energetic, suspenseful, commentator, inspiring, etc.
+- `channel_target`: animals, kids, horror, sports, reddit, minecraft
+- `learning.db`: views, likes, shares, comments ve completion history icin SQLite database
+
+`daily-run` v3'te full pipeline calistirmaya ayarlidir: trend/story/storyboard/clips/visuals/voice/captions/render/score. Plan-only calismak icin `--no-render` kullan.
 
 ## Kaynaklar
 
@@ -13,38 +50,25 @@ Sistem gunluk trend sinyallerini toplar, kategorilere ayirir, puanlar, en iyi 10
 
 YouTube kaynaklari icin `YOUTUBE_API_KEY` gerekir. Google Trends RSS ve Reddit herkese acik endpoint kullanir, fakat ag politikasi veya servis tarafli kisitlar nedeniyle bazen bos donebilir.
 
-## Trend Kategorileri
+## Kategori Secimi
 
-- Sports
-- Horror Stories
-- Funny Kids
-- Viral News
-- Gaming
-- AI
-- Celebrity
-- Animals
-- Movies & TV
-- Misc Viral
-
-Kategori secimi artik YouTube kategori ID'sine bagli degildir. Sistem baslik, kaynak ve anahtar kelime sinyallerinden kendi kategorisini tahmin eder.
+Kategori secimi artik YouTube kategori ID'sine bagli degildir. Sistem baslik, kaynak ve anahtar kelime sinyallerinden v3 entertainment kategorisini tahmin eder. Eski AI/news/generic trend kategorileri, story-first kategorilere normalize edilir.
 
 ## Skor Algoritmasi
 
-Her trend icin dort skor uretilir:
+Her trend icin v3 viral skor seti uretilir:
 
 - `trend_score`: gorunurluk gucu. YouTube goruntulenme/begeni, Reddit upvote, Google Trends trafik ve kaynak sayisini birlestirir.
 - `growth_score`: buyume hizi. Yayin yasina gore YouTube view velocity, Google Trends trafik artisi, Reddit upvote ve cok kaynak sinyalini kullanir.
 - `competition_score`: rekabet puani. Benzer YouTube arama yogunlugu, kaynak sayisi ve uzun/genis baslik sinyalinden hesaplanir. Yuksek rekabet daha zor firsat demektir.
-- `viral_potential_score`: nihai secim puani. Formul:
-
-```text
-viral = trend_score * 0.38
-      + growth_score * 0.27
-      + (100 - competition_score) * 0.18
-      + emotional_category_score * 0.17
-```
-
-`emotional_category_score`, Shorts izlenebilirligini artiran kategori etkisini temsil eder. Horror Stories, Animals, Funny Kids ve AI gibi formatlar daha yuksek taban alir.
+- `hook_score`: ilk 3 saniyede scroll durdurma gucu.
+- `curiosity_score`: 3-10 saniye arasi conflict/merak gucu.
+- `payoff_score`: twist veya emotional payoff gucu.
+- `shareability_score`: yorum, paylasim ve remix potansiyeli.
+- `completion_probability`: videonun sonuna kadar izlenme olasiligi.
+- `rewatch_probability`: tekrar izlenme olasiligi.
+- `viral_score`: ranking icin ana entertainment skoru.
+- `publish_ready`: skor ve asset kosullarindan gecen paketler icin gate.
 
 ## Icerik Uretim Kurallari
 

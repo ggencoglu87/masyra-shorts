@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .learning import ensure_learning_db, record_generated_package
 from .planner import build_daily_network_plan, write_video_packages
 from .quality import score_video_dirs
 from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render_video_dirs
@@ -46,6 +47,9 @@ def run_daily(
     report_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     written_video_files = write_video_packages(plan, run_dir)
     package_dirs = sorted({path.parent for path in written_video_files})
+    learning_db = ensure_learning_db(output_dir)
+    for item, package_dir in zip(plan["items"], package_dirs):
+        record_generated_package(package_dir, item, learning_db)
     tts_result = synthesize_voiceovers_for_dirs(package_dirs, provider_name=tts_provider)
 
     render_result = None
@@ -84,6 +88,7 @@ def run_daily(
         "trends_analyzed": len(trends),
         "videos_prepared": len(plan["items"]),
         "video_files_written": len(written_video_files),
+        "learning_db": str(learning_db),
         "tts": tts_result,
         "visuals": visuals_result,
         "video_clips": clips_result,

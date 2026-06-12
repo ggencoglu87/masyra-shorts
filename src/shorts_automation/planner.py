@@ -8,36 +8,87 @@ from pathlib import Path
 from .scoring import score_trend
 
 
+VIRAL_CATEGORIES = [
+    "Funny Animals",
+    "Funny Kids",
+    "Funny Fails",
+    "Horror Stories",
+    "Reddit Stories",
+    "Sports Drama",
+    "Relationship Stories",
+    "Minecraft Stories",
+    "Motivational Stories",
+    "Celebrity Drama",
+    "Survival Stories",
+    "Crazy Facts",
+]
+
+CHANNEL_BY_CATEGORY = {
+    "Funny Animals": "animals",
+    "Funny Kids": "kids",
+    "Funny Fails": "kids",
+    "Horror Stories": "horror",
+    "Reddit Stories": "reddit",
+    "Sports Drama": "sports",
+    "Relationship Stories": "reddit",
+    "Minecraft Stories": "minecraft",
+    "Motivational Stories": "reddit",
+    "Celebrity Drama": "reddit",
+    "Survival Stories": "reddit",
+    "Crazy Facts": "reddit",
+}
+
+VOICE_PROFILES = {
+    "Funny Animals": {"style": "energetic", "pace": "quick", "emotion": "playful surprise"},
+    "Funny Kids": {"style": "energetic", "pace": "quick", "emotion": "warm comedy"},
+    "Funny Fails": {"style": "energetic", "pace": "quick", "emotion": "chaotic comedy"},
+    "Horror Stories": {"style": "slow and suspenseful", "pace": "slow", "emotion": "dread"},
+    "Reddit Stories": {"style": "confessional storyteller", "pace": "medium", "emotion": "curious tension"},
+    "Sports Drama": {"style": "excited commentator", "pace": "fast", "emotion": "high stakes"},
+    "Relationship Stories": {"style": "dramatic storyteller", "pace": "medium", "emotion": "betrayal and reveal"},
+    "Minecraft Stories": {"style": "fast gamer narration", "pace": "fast", "emotion": "adventure"},
+    "Motivational Stories": {"style": "inspiring", "pace": "medium", "emotion": "hopeful intensity"},
+    "Celebrity Drama": {"style": "dramatic entertainment host", "pace": "fast", "emotion": "tea and suspense"},
+    "Survival Stories": {"style": "urgent documentary narrator", "pace": "medium", "emotion": "danger"},
+    "Crazy Facts": {"style": "excited fact narrator", "pace": "fast", "emotion": "shock"},
+}
+
+
 def build_daily_network_plan(trends: list[dict], channel_name: str, top_n: int = 10) -> dict:
     scored = []
     for trend in trends:
-        scores = score_trend(trend)
-        scored.append({**trend, **scores})
+        entertainment_trend = {**trend, "category": normalize_viral_category(trend.get("category", ""), trend.get("title", ""))}
+        scores = score_trend(entertainment_trend)
+        scored.append({**entertainment_trend, **scores})
 
-    ranked = sorted(scored, key=lambda item: item["viral_potential_score"], reverse=True)[:top_n]
+    ranked = sorted(scored, key=lambda item: item["viral_score"], reverse=True)[:top_n]
     items = [make_content_item(trend, rank=index + 1, channel_name=channel_name) for index, trend in enumerate(ranked)]
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "channel_name": channel_name,
-        "network_strategy": "trend-following Shorts network",
-        "selection_rule": f"Top {top_n} by viral_potential_score",
+        "network_strategy": "autonomous viral entertainment Shorts studio",
+        "selection_rule": f"Top {top_n} by viral_score and completion probability",
+        "success_metric": "Would someone stop scrolling and watch this?",
         "items": items,
     }
 
 
 def make_content_item(trend: dict, rank: int, channel_name: str) -> dict:
     topic = normalize_topic(trend["title"])
-    title = make_title(topic, trend["category"])
-    script = make_script(topic, trend["category"], channel_name)
-    narration = make_narration(topic, trend["category"], channel_name)
-    hashtags = build_hashtags(topic, trend["category"])
+    category = normalize_viral_category(trend["category"], topic)
+    story = build_story(topic, category)
+    title = make_title(story["hook"], category)
+    script = make_script(story, category)
+    narration = make_narration(story, category)
+    storyboard = make_storyboard(story, category)
+    hashtags = build_hashtags(topic, category)
 
     return {
         "rank": rank,
         "trend": {
             "title": trend["title"],
-            "category": trend["category"],
+            "category": category,
             "sources": trend.get("sources", []),
             "evidence": trend.get("evidence", []),
             "urls": trend.get("urls", []),
@@ -48,18 +99,26 @@ def make_content_item(trend: dict, rank: int, channel_name: str) -> dict:
             "competition_score": trend["competition_score"],
             "momentum_score": trend["momentum_score"],
             "viral_potential_score": trend["viral_potential_score"],
+            "hook_score": trend["hook_score"],
+            "curiosity_score": trend["curiosity_score"],
+            "payoff_score": trend["payoff_score"],
+            "shareability_score": trend["shareability_score"],
+            "completion_probability": trend["completion_probability"],
+            "rewatch_probability": trend["rewatch_probability"],
+            "viral_score": trend["viral_score"],
+            "publish_ready": trend["publish_ready"],
         },
-        "trend_intelligence": explain_trend(trend),
+        "trend_intelligence": explain_trend({**trend, "category": category}),
         "content_strategy": {
-            "hook": f"The hidden detail behind this {trend['category'].lower()} trend.",
-            "story_structure": "hook -> context -> surprising turn -> fast payoff -> comment question",
+            "hook": story["hook"],
+            "story_structure": "hook -> curiosity -> escalation -> twist -> payoff",
             "retention_plan": [
-                "Open with a curiosity gap in the first 2 seconds.",
-                "Change visual energy every 2-4 seconds.",
-                "Reveal the strongest detail after the midpoint.",
-                "End on a question that feels natural to answer.",
+                "Open with a curiosity trigger in the first 3 seconds.",
+                "Introduce conflict before second 10.",
+                "Escalate with a new problem before second 20.",
+                "Pay off with a twist or emotional release before second 30.",
             ],
-            "cta": "Ask one direct question tied to the story.",
+            "cta": story["cta"],
         },
         "creative_rules": [
             "Do not copy trend videos.",
@@ -70,11 +129,15 @@ def make_content_item(trend: dict, rank: int, channel_name: str) -> dict:
         "description": f"Original YouTube Short inspired by the trending theme: {topic}.",
         "script": script,
         "narration": narration,
+        "storyboard": storyboard,
+        "voice_profile": VOICE_PROFILES[category],
+        "channel_target": CHANNEL_BY_CATEGORY[category],
         "hashtags": hashtags,
         "production": {
             "format": "vertical 9:16",
-            "duration_target_seconds": 28,
-            "visual_style": visual_style_for_category(trend["category"]),
+            "duration_target_seconds": 26,
+            "caption_style": "TikTok word-by-word large burned captions",
+            "visual_style": visual_style_for_category(category),
             "asset_policy": "Use licensed stock video first, then generated visuals, public-domain material, or original graphics only.",
         },
         "copyright_safe": True,
@@ -95,6 +158,8 @@ def write_video_packages(plan: dict, output_root: Path) -> list[Path]:
             "script.txt": item["script"],
             "voiceover.txt": item["narration"],
             "subtitles.srt": make_subtitles(item["narration"]),
+            "captions.json": json.dumps(make_word_captions(item["narration"]), ensure_ascii=False, indent=2),
+            "storyboard.json": json.dumps(item["storyboard"], ensure_ascii=False, indent=2),
             "asset-prompts.json": json.dumps(make_asset_prompts(item), ensure_ascii=False, indent=2),
             "copyright-checklist.json": json.dumps(make_copyright_checklist(item), ensure_ascii=False, indent=2),
             "upload-metadata.json": json.dumps(
@@ -121,41 +186,19 @@ def write_video_packages(plan: dict, output_root: Path) -> list[Path]:
 
 def make_asset_prompts(item: dict) -> dict:
     category = item["trend"]["category"]
-    topic = item["trend"]["title"]
     style = item["production"]["visual_style"]
+    storyboard = item.get("storyboard", [])
     return {
-        "policy": "Generate or source original/licensed assets only. Do not recreate source video frames or copyrighted clips.",
+        "policy": "Generate or source original/licensed assets only. Match concrete story moments, not abstract trend graphics.",
         "scenes": [
             {
-                "scene": 1,
-                "time": "0-3s",
+                "scene": scene["scene"],
+                "time": scene["time"],
                 "type": "stock_video_or_generated_image",
-                "prompt": f"Vertical 9:16 hook visual for {category}: real movement, emotion, fast attention, {style}. No logos, no celebrities, no copyrighted footage.",
-            },
-            {
-                "scene": 2,
-                "time": "3-12s",
-                "type": "stock_video_or_generated_image",
-                "prompt": f"Original visual about the theme '{topic}', people reacting, action, suspense, vertical composition, no copied source imagery.",
-            },
-            {
-                "scene": 3,
-                "time": "12-25s",
-                "type": "stock_video_or_generated_image",
-                "prompt": f"Visual metaphor showing why a {category} trend spreads quickly, kinetic movement, human emotion, licensed stock or generated look.",
-            },
-            {
-                "scene": 4,
-                "time": "25-38s",
-                "type": "stock_video_or_generated_image",
-                "prompt": "Fast story turn moment, close-up reaction, mystery reveal energy, no third-party marks.",
-            },
-            {
-                "scene": 5,
-                "time": "38-45s",
-                "type": "stock_video_or_generated_image",
-                "prompt": "Final reaction shot that invites comments, high contrast, emotional, no brand text, no copyrighted media.",
-            },
+                "prompt": f"{scene['visual_prompt']}, vertical 9:16, emotional reaction, {style}. No logos, no copyrighted characters, no dashboard screenshots.",
+                "search_queries": scene["search_queries"],
+            }
+            for scene in storyboard
         ],
     }
 
@@ -190,37 +233,38 @@ def explain_trend(trend: dict) -> dict:
     }
 
 
-def make_script(topic: str, category: str, channel_name: str) -> str:
+def make_script(story: dict, category: str) -> str:
     return "\n".join(
         [
-            f"0-3s HOOK: This {category.lower()} trend is exploding, but one detail makes it way more interesting.",
-            f"3-10s SETUP: The topic is {topic}. Explain the situation fast without copying any source video.",
-            "10-20s TURN: Reveal the emotional trigger, hidden detail, or weird reason people keep watching.",
-            "20-30s PAYOFF: End with a sharp takeaway, twist, or question that makes viewers comment.",
-            "CTA: Ask one natural question that fits the story.",
+            f"0-3s HOOK: {story['hook']}",
+            f"3-10s CURIOSITY: {story['curiosity']}",
+            f"10-20s ESCALATION: {story['escalation']}",
+            f"20-26s TWIST: {story['twist']}",
+            f"26-30s PAYOFF: {story['payoff']}",
         ]
     )
 
 
-def make_narration(topic: str, category: str, channel_name: str) -> str:
-    return (
-        f"This {category.lower()} trend is moving fast: {topic}. "
-        "But the reason people keep watching is not just the clip. "
-        "It hits immediately, then leaves one question open long enough to make you wait for the answer. "
-        "That tiny gap is what turns a random moment into something people share. "
-        "Would you have stopped scrolling for this?"
-    )
+def make_narration(story: dict, category: str) -> str:
+    return " ".join([story["hook"], story["curiosity"], story["escalation"], story["twist"], story["payoff"], story["cta"]])
 
 
 def make_subtitles(narration: str) -> str:
-    sentences = [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", narration) if sentence.strip()]
+    words = [word.strip() for word in narration.split() if word.strip()]
     blocks = []
-    start = 0
-    for index, sentence in enumerate(sentences, start=1):
-        end = start + max(3, min(7, len(sentence.split()) // 2))
-        blocks.append(f"{index}\n{_srt_time(start)} --> {_srt_time(end)}\n{sentence}\n")
-        start = end
+    for index, word in enumerate(words[:72], start=1):
+        start = (index - 1) * 0.35
+        end = start + 0.34
+        blocks.append(f"{index}\n{_srt_time_float(start)} --> {_srt_time_float(end)}\n{word.upper()}\n")
     return "\n".join(blocks)
+
+
+def make_word_captions(narration: str) -> list[dict]:
+    return [
+        {"word": word.strip(".,!?;:").upper(), "start": round(index * 0.35, 2), "end": round((index * 0.35) + 0.34, 2)}
+        for index, word in enumerate(narration.split()[:72])
+        if word.strip()
+    ]
 
 
 def make_render_brief(item: dict) -> str:
@@ -228,6 +272,8 @@ def make_render_brief(item: dict) -> str:
         [
             "Render target: 1080x1920, 30fps, 20-45 seconds.",
             f"Category: {item['trend']['category']}",
+            f"Channel target: {item['channel_target']}",
+            f"Voice style: {item['voice_profile']['style']}",
             f"Visual style: {item['production']['visual_style']}",
             "Footage rule: no copied trend footage and no copyrighted clips.",
             "Prioritize licensed stock video clips with motion, emotion, and action. Use generated imagery only when clips are missing.",
@@ -236,36 +282,26 @@ def make_render_brief(item: dict) -> str:
 
 
 def make_title(topic: str, category: str) -> str:
-    base = topic if len(topic) <= 52 else f"{topic[:49].rstrip()}..."
-    prefixes = {
-        "AI": "This AI Trend Is Moving Fast",
-        "Gaming": "Gamers Are Sharing This",
-        "Horror Stories": "This Creepy Trend Has a Twist",
-        "Funny Kids": "This Funny Kid Moment Exploded",
-        "Animals": "This Animal Trend Is Everywhere",
-        "Sports": "Sports Fans Are Talking About This",
-        "Celebrity": "This Celebrity Trend Is Blowing Up",
-        "Movies & TV": "This Movie & TV Trend Is Spreading",
-        "Viral News": "This Viral News Trend Is Everywhere",
-        "Misc Viral": "This Trend Is Suddenly Everywhere",
-    }
-    return f"{prefixes.get(category, 'This Trend Is Suddenly Everywhere')}: {base} #shorts"
+    base = topic.replace("...", "").strip()
+    return f"{base[:58].rstrip()} #shorts"
 
 
 def build_hashtags(topic: str, category: str) -> list[str]:
     category_tags = {
-        "Sports": "sports",
+        "Sports Drama": "sports",
         "Horror Stories": "horror",
         "Funny Kids": "funnykids",
-        "Viral News": "viralnews",
-        "Gaming": "gaming",
-        "AI": "ai",
-        "Celebrity": "celebrity",
-        "Animals": "animals",
-        "Movies & TV": "moviestv",
-        "Misc Viral": "viral",
+        "Funny Animals": "funnyanimals",
+        "Funny Fails": "fails",
+        "Reddit Stories": "redditstories",
+        "Relationship Stories": "relationship",
+        "Minecraft Stories": "minecraft",
+        "Motivational Stories": "motivation",
+        "Celebrity Drama": "celebritydrama",
+        "Survival Stories": "survival",
+        "Crazy Facts": "crazyfacts",
     }
-    seed = ["shorts", "viral", "trend", category_tags.get(category, "viral")]
+    seed = ["shorts", "fyp", "viral", category_tags.get(category, "story")]
     seed.extend(re.findall(r"[A-Za-z0-9]{4,}", topic.lower())[:4])
     unique = []
     for tag in seed:
@@ -277,18 +313,124 @@ def build_hashtags(topic: str, category: str) -> list[str]:
 
 def visual_style_for_category(category: str) -> str:
     styles = {
-        "Sports": "fast kinetic stats, scoreboard overlays, original motion graphics",
-        "Horror Stories": "dark original illustrations, suspense captions, no copied footage",
-        "Funny Kids": "bright kinetic text, playful icons, original reenactment graphics",
-        "Viral News": "clean news desk graphics, maps, timelines, bold captions",
-        "Gaming": "original UI-style graphics, controller shots, generated gameplay-like backgrounds",
-        "AI": "screen graphics, abstract model diagrams, futuristic generated visuals",
-        "Celebrity": "timeline cards, silhouette graphics, public-domain or licensed images only",
-        "Animals": "licensed stock or generated animal scenes, warm captions",
-        "Movies & TV": "original review graphics, no copyrighted clips",
-        "Misc Viral": "high-contrast kinetic typography and original explainer visuals",
+        "Funny Animals": "real pets, funny reactions, quick cuts",
+        "Funny Kids": "playful home-video energy, bright reactions",
+        "Funny Fails": "fast action, near-miss comedy, reaction shots",
+        "Horror Stories": "dark hallway, shadows, suspenseful close-ups",
+        "Reddit Stories": "POV reenactment, phone text, expressive faces",
+        "Sports Drama": "crowd tension, scoreboard pressure, celebration",
+        "Relationship Stories": "dramatic texting, emotional close-ups",
+        "Minecraft Stories": "blocky survival world, cave suspense, gaming motion",
+        "Motivational Stories": "cinematic struggle, sunrise payoff, human grit",
+        "Celebrity Drama": "red carpet silhouettes, paparazzi-style flashes, no likeness copying",
+        "Survival Stories": "wilderness danger, urgent movement, rescue tension",
+        "Crazy Facts": "surprising real-world objects, bold reaction visuals",
     }
-    return styles.get(category, styles["Misc Viral"])
+    return styles.get(category, styles["Reddit Stories"])
+
+
+def build_story(topic: str, category: str) -> dict:
+    templates = {
+        "Funny Animals": ("Nobody expected this animal to fight back.", "A tiny pet got blamed for the mess.", "Then the camera caught the real troublemaker.", "The guilty one tried to act normal.", "But the evidence was literally stuck to its face.", "Would your pet get away with this?"),
+        "Funny Kids": ("This kid had one job.", "Everyone thought the answer would be simple.", "Then the explanation got way too confident.", "The room went silent for one second.", "And somehow the kid was technically right.", "Would you have laughed or given full credit?"),
+        "Funny Fails": ("Watch what happens next.", "The plan looked perfect for about two seconds.", "Then one tiny mistake changed everything.", "Everybody froze before the crash.", "The recovery was funnier than the fail.", "Would you try this again?"),
+        "Horror Stories": ("Nobody believed the knocking was real.", "A boy heard it every night at 3 AM.", "Then he finally checked the camera.", "The hallway was empty, but the door moved.", "The knock came from inside the room.", "Would you watch the rest of the footage?"),
+        "Reddit Stories": ("I thought my roommate was harmless.", "Then food started disappearing every night.", "I set up one small trap.", "The next morning, the note on the fridge was gone.", "But my camera caught who wrote it.", "What would you do next?"),
+        "Sports Drama": ("The game looked completely over.", "They were down by 30 and the crowd was leaving.", "Then the bench player asked for one chance.", "The first shot went in, then the second.", "By the final buzzer, nobody was sitting down.", "Best comeback or pure luck?"),
+        "Relationship Stories": ("She found one text that changed everything.", "At first it looked like a normal reminder.", "Then she noticed the contact name was fake.", "He said it was a joke, but the timing made no sense.", "So she replied from his phone.", "Would you forgive this?"),
+        "Minecraft Stories": ("My friend told me not to dig down.", "I did it anyway because the cave sounded empty.", "Then my torch went out.", "Something moved behind the diamonds.", "The base was never ours.", "Would you log out or keep mining?"),
+        "Motivational Stories": ("Everyone counted him out.", "He failed the same test three times.", "On the fourth try, he stopped trying to look talented.", "He practiced the boring part every single day.", "Six months later, they asked how he got lucky.", "What would you start today?"),
+        "Celebrity Drama": ("One red carpet reaction said everything.", "The smile lasted half a second too long.", "Then another celebrity looked away.", "Fans replayed the clip until they found the moment.", "The real drama was not what anyone expected.", "Did you catch it the first time?"),
+        "Survival Stories": ("He had ten seconds to choose.", "The trail disappeared under fresh snow.", "His phone had one percent battery.", "Then he saw footprints going the wrong direction.", "Following them saved his life.", "Would you have followed them?"),
+        "Crazy Facts": ("This sounds fake, but it is real.", "There is an animal that can survive something impossible.", "Scientists tested it again and again.", "The weirdest part is what wakes it back up.", "It basically hits pause on life.", "What fact should we do next?"),
+    }
+    hook, curiosity, escalation, twist, payoff, cta = templates[category]
+    return {
+        "topic_seed": topic,
+        "hook": hook,
+        "curiosity": curiosity,
+        "escalation": escalation,
+        "twist": twist,
+        "payoff": payoff,
+        "cta": cta,
+    }
+
+
+def make_storyboard(story: dict, category: str) -> list[dict]:
+    labels = [
+        ("Hook", "0-3s", story["hook"]),
+        ("Conflict", "3-10s", story["curiosity"]),
+        ("Escalation", "10-20s", story["escalation"]),
+        ("Twist", "20-26s", story["twist"]),
+        ("Payoff", "26-30s", story["payoff"]),
+    ]
+    return [
+        {
+            "scene": index,
+            "beat": beat,
+            "time": time_range,
+            "caption": text,
+            "visual_prompt": visual_prompt_for_scene(category, text),
+            "search_queries": scene_search_queries(category, text),
+        }
+        for index, (beat, time_range, text) in enumerate(labels, start=1)
+    ]
+
+
+def visual_prompt_for_scene(category: str, text: str) -> str:
+    return f"Story moment: {text}"
+
+
+def scene_search_queries(category: str, text: str) -> list[str]:
+    lower = text.lower()
+    seeds = {
+        "Funny Animals": ["cat reaction", "pet surprise", "animal funny"],
+        "Funny Kids": ["kid funny reaction", "child surprised", "family laughing"],
+        "Funny Fails": ["funny fail", "people surprised", "near miss"],
+        "Horror Stories": ["scary dark hallway", "door knocking", "security camera night"],
+        "Reddit Stories": ["roommate argument", "phone text drama", "apartment kitchen"],
+        "Sports Drama": ["sports celebration", "basketball comeback", "crowd cheering"],
+        "Relationship Stories": ["couple argument", "text message reaction", "woman shocked phone"],
+        "Minecraft Stories": ["minecraft cave", "gaming setup", "block world"],
+        "Motivational Stories": ["person training", "runner sunrise", "emotional success"],
+        "Celebrity Drama": ["red carpet cameras", "paparazzi flash", "celebrity event"],
+        "Survival Stories": ["snow trail", "wilderness survival", "rescue helicopter"],
+        "Crazy Facts": ["amazing animal", "science experiment", "surprised reaction"],
+    }
+    words = [word for word in re.findall(r"[a-z]{4,}", lower) if word not in {"this", "that", "then", "with", "from", "they", "were"}]
+    phrase = " ".join(words[:2])
+    queries = list(seeds[category])
+    if phrase:
+        queries.insert(0, phrase)
+    return queries[:4]
+
+
+def normalize_viral_category(category: str, title: str = "") -> str:
+    value = f"{category} {title}".lower()
+    tokens = set(re.findall(r"[a-z]+", value))
+    if "animal" in tokens or "animals" in tokens or "dog" in tokens or "dogs" in tokens or "cat" in tokens or "cats" in tokens:
+        return "Funny Animals"
+    if "kid" in value or "child" in value:
+        return "Funny Kids"
+    if "horror" in value or "scary" in value or "doorbell" in value:
+        return "Horror Stories"
+    if "sport" in value or "basketball" in value or "game" in value and "minecraft" not in value:
+        return "Sports Drama"
+    if "minecraft" in value:
+        return "Minecraft Stories"
+    if "celebrity" in value or "red carpet" in value:
+        return "Celebrity Drama"
+    if "fact" in value or "science" in value:
+        return "Crazy Facts"
+    if "fail" in value:
+        return "Funny Fails"
+    if "survival" in value or "rescue" in value:
+        return "Survival Stories"
+    if "relationship" in value or "girlfriend" in value or "boyfriend" in value:
+        return "Relationship Stories"
+    if "motiv" in value:
+        return "Motivational Stories"
+    return "Reddit Stories"
 
 
 def normalize_topic(title: str) -> str:
@@ -304,3 +446,9 @@ def slugify(value: str) -> str:
 
 def _srt_time(seconds: int) -> str:
     return f"00:00:{seconds:02d},000"
+
+
+def _srt_time_float(seconds: float) -> str:
+    whole = int(seconds)
+    millis = int((seconds - whole) * 1000)
+    return f"00:00:{whole:02d},{millis:03d}"

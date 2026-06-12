@@ -340,6 +340,10 @@ def build_clip_queries(plan: dict, prompts: dict) -> list[str]:
         if clean_title:
             queries.append(f"{clean_title} reaction")
     for scene in prompts.get("scenes", []):
+        for search_query in scene.get("search_queries", []):
+            cleaned = _sanitize_query(str(search_query))
+            if cleaned:
+                queries.append(cleaned)
         prompt = str(scene.get("prompt", ""))
         words = [word.strip(".,:;!?()[]'\"").lower() for word in prompt.split()]
         keywords = [word for word in words if len(word) > 4 and word not in _query_stopwords()]
@@ -355,7 +359,17 @@ def build_clip_queries(plan: dict, prompts: dict) -> list[str]:
 
 def category_clip_queries(category: str) -> list[str]:
     mapping = {
+        "funny animals": ["cat reaction", "pet surprise", "funny animal"],
         "funny kids": ["funny reaction", "people surprised"],
+        "funny fails": ["funny fail", "people surprised"],
+        "reddit stories": ["phone text drama", "people surprised"],
+        "sports drama": ["sports celebration", "crowd cheering"],
+        "relationship stories": ["text message reaction", "couple argument"],
+        "minecraft stories": ["gaming setup", "minecraft cave"],
+        "motivational stories": ["person training", "emotional success"],
+        "celebrity drama": ["red carpet cameras", "paparazzi flash"],
+        "survival stories": ["wilderness survival", "rescue helicopter"],
+        "crazy facts": ["amazing animal", "science experiment"],
         "viral news": ["breaking news reaction", "people surprised"],
         "ai": ["viral technology", "people surprised"],
         "sports": ["sports celebration", "people surprised"],

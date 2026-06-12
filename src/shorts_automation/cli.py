@@ -29,7 +29,8 @@ def main(argv: list[str] | None = None) -> int:
     daily_parser.add_argument("--limit", type=int, default=int(os.getenv("TREND_SOURCE_LIMIT", "50")))
     daily_parser.add_argument("--top-n", type=int, default=int(os.getenv("TREND_TOP_N", "10")))
     daily_parser.add_argument("--output-dir", default=os.getenv("SHORTS_OUTPUT_DIR", "outputs"))
-    daily_parser.add_argument("--render", action="store_true", help="Render final.mp4 files with FFmpeg when available.")
+    daily_parser.add_argument("--render", action="store_true", default=True, help="Render final.mp4 files with FFmpeg when available. Enabled by default in v3.")
+    daily_parser.add_argument("--no-render", action="store_false", dest="render", help="Prepare story packages and voiceover only; skip clips, visuals, and video rendering.")
     daily_parser.add_argument("--upload", action="store_true", help="Reserved for explicit YouTube upload. Disabled without OAuth integration.")
     tts_choices = ["mock", "elevenlabs", "piper", "off"]
     daily_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
