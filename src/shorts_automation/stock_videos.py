@@ -313,7 +313,15 @@ def load_clip_manifest(video_dir: Path) -> dict:
     return _read_json(path) if path.exists() else {}
 
 
+def load_clip_result(video_dir: Path) -> dict:
+    path = video_dir / "video-clips-result.json"
+    return _read_json(path) if path.exists() else {}
+
+
 def video_clips_available(video_dir: Path) -> bool:
+    result = load_clip_result(video_dir)
+    if result:
+        return int(result.get("real_clip_count", 0) or 0) >= MIN_CLIPS
     manifest = load_clip_manifest(video_dir)
     clips = manifest.get("clips", [])
     return len([clip for clip in clips if (video_dir / clip.get("file", "")).exists()]) >= MIN_CLIPS

@@ -11,9 +11,9 @@ from pathlib import Path
 from .quality import load_quality_score, score_video_package
 from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render_video_package
 from .status_store import DEFAULT_STATUS, StatusStore, VALID_STATUSES
-from .stock_videos import default_video_provider, generate_video_clips_for_package, load_clip_manifest, video_clips_available
+from .stock_videos import default_video_provider, generate_video_clips_for_package, load_clip_manifest, load_clip_result
 from .tts import synthesize_voiceover, tts_status
-from .visuals import default_visual_provider, generate_visuals_for_package, load_scene_manifest, load_visual_result, visuals_available
+from .visuals import default_visual_provider, generate_visuals_for_package, load_scene_manifest, load_visual_result
 
 
 STATUS_ORDER = ["Needs Edit", "Approved", "Rejected", "Publish Ready"]
@@ -230,7 +230,7 @@ def render_package_card(output_dir: Path, package: dict) -> str:
         <div class="card-topline">
           <span class="pill status-{slug(package["status"])}">{_e(package["status"])}</span>
           <span class="pill">{_e(package["category"])}</span>
-          {visual_badge(package["visuals_ready"])}
+          {visual_badge(package)}
           {audio_badge(package["audio_ready"])}
           {clip_badge(package["clips_ready"])}
         </div>
@@ -258,6 +258,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     prompts = _read_json(video_dir / "asset-prompts.json")
     manifest = load_scene_manifest(video_dir)
     clip_manifest = load_clip_manifest(video_dir)
+    clip_result = load_clip_result(video_dir)
     visual_result = load_visual_result(video_dir)
     quality = load_quality_score(video_dir)
     status_data = store.get(video_dir)
@@ -268,15 +269,16 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     tts_integrity = tts_status(video_dir)
     requested_tts_provider = tts_result.get("requested_provider") or tts_result.get("provider", "not generated")
     provider_used = tts_result.get("provider_used") or tts_result.get("provider", "not generated")
+    asset_status = dashboard_asset_status(video_dir)
     rel = str(video_dir.relative_to(output_dir))
     download = _download_link(output_dir, final_mp4)
     visual_warning = ""
-    if not visuals_available(video_dir):
+    if not asset_status["clips_ready"] and not asset_status["real_openai_visuals_ready"] and not asset_status["placeholder_visuals"]:
         visual_warning = '<div class="visual-warning">VISUALS NOT GENERATED</div>'
-    elif _placeholder_visuals(manifest, visual_result):
+    elif asset_status["placeholder_warning"]:
         visual_warning = '<div class="visual-warning">Placeholder visuals only — not ready for publishing.</div>'
     audio_warning = ""
-    if (final_mp4.exists() or preview_mp4.exists()) and not voiceover_mp3.exists():
+    if (final_mp4.exists() or preview_mp4.exists()) and not asset_status["audio_ready"]:
         audio_warning = '<div class="warning">Silent render: voiceover.mp3 is missing. Add ElevenLabs audio and rerender for voice.</div>'
 
     return page(
@@ -364,9 +366,11 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
         {score_box("Competition", plan.get("scores", {}).get("competition_score", ""))}
         </section>
         {quality_section(quality)}
-        {clip_section(output_dir, video_dir, clip_manifest)}
-        {scene_timeline(output_dir, video_dir, manifest)}
+        {asset_status_section(asset_status)}
+        {clip_section(output_dir, video_dir, clip_manifest, clip_result)}
+        {scene_timeline(output_dir, video_dir, manifest, asset_status)}
         {file_section("video-clips-manifest.json", json.dumps(clip_manifest, ensure_ascii=False, indent=2))}
+        {file_section("video-clips-result.json", json.dumps(clip_result, ensure_ascii=False, indent=2))}
         {file_section("quality-score.json", json.dumps(quality, ensure_ascii=False, indent=2))}
         {file_section("visual-result.json", json.dumps(visual_result, ensure_ascii=False, indent=2))}
         {file_section("script.txt", _read_text(video_dir / "script.txt"))}
@@ -385,6 +389,7 @@ def build_package_rows(output_dir: Path, store: StatusStore) -> list[dict]:
     for video_dir in find_video_packages(output_dir):
         plan = _read_json(video_dir / "video-plan.json")
         status = store.get(video_dir)["status"]
+        asset_status = dashboard_asset_status(video_dir)
         rows.append(
             {
                 "video_dir": video_dir,
@@ -392,10 +397,11 @@ def build_package_rows(output_dir: Path, store: StatusStore) -> list[dict]:
                 "trend_title": plan.get("trend", {}).get("title", video_dir.name),
                 "category": plan.get("trend", {}).get("category", ""),
                 "scores": plan.get("scores", {}),
-                "visuals_ready": visuals_available(video_dir),
-                "audio_ready": (video_dir / "voiceover.mp3").exists(),
-                "clips_ready": video_clips_available(video_dir),
-                "publish_ready": bool(load_quality_score(video_dir).get("publish_ready")),
+                "visuals_ready": asset_status["visuals_ready"],
+                "audio_ready": asset_status["audio_ready"],
+                "clips_ready": asset_status["clips_ready"],
+                "publish_ready": asset_status["publish_ready"],
+                "asset_status": asset_status,
             }
         )
     return rows
@@ -427,9 +433,44 @@ def status_button(status: str, label: str) -> str:
     return f'<button class="btn btn-{slug(status)}" type="submit" name="status" value="{_e(status)}">{_e(label)}</button>'
 
 
-def visual_badge(ready: bool) -> str:
-    if ready:
-        return '<span class="pill status-approved">Visuals Ready</span>'
+def dashboard_asset_status(video_dir: Path) -> dict:
+    clip_result = load_clip_result(video_dir)
+    visual_result = load_visual_result(video_dir)
+    scene_manifest = load_scene_manifest(video_dir)
+    tts_result = _read_json(video_dir / "tts-result.json")
+    final_exists = (video_dir / "final.mp4").exists()
+    real_clip_count = int(clip_result.get("real_clip_count", 0) or 0)
+    clip_count = int(clip_result.get("clip_count", 0) or 0)
+    clips_ready = real_clip_count >= 3 and final_exists
+    real_openai_visuals_ready = bool(visual_result.get("real_visuals_ready"))
+    placeholder_visuals = _placeholder_visuals(scene_manifest, visual_result)
+    audio_ready = bool(tts_result.get("audio_matches_current_text"))
+    provider_used = tts_result.get("provider_used") or tts_result.get("provider")
+    publish_ready = bool(clip_result.get("publish_ready")) and clips_ready and audio_ready
+    return {
+        "final_mp4": final_exists,
+        "clip_count": clip_count,
+        "real_clip_count": real_clip_count,
+        "clips_ready": clips_ready,
+        "video_provider": clip_result.get("provider", "unknown"),
+        "video_publish_ready": bool(clip_result.get("publish_ready")),
+        "audio_ready": audio_ready,
+        "audio_provider": provider_used or "not generated",
+        "requested_audio_provider": tts_result.get("requested_provider") or tts_result.get("provider", "not generated"),
+        "real_openai_visuals_ready": real_openai_visuals_ready,
+        "placeholder_visuals": placeholder_visuals,
+        "placeholder_warning": bool(not clips_ready and not real_openai_visuals_ready and placeholder_visuals),
+        "visuals_ready": bool(clips_ready or real_openai_visuals_ready),
+        "publish_ready": publish_ready,
+    }
+
+
+def visual_badge(package: dict) -> str:
+    status = package.get("asset_status", {})
+    if status.get("clips_ready"):
+        return '<span class="pill status-approved">Real Video Clips Used</span>'
+    if status.get("real_openai_visuals_ready"):
+        return '<span class="pill status-approved">OpenAI Visuals Ready</span>'
     return '<span class="pill status-rejected">VISUALS NOT GENERATED</span>'
 
 
@@ -477,6 +518,18 @@ def quality_section(quality: dict) -> str:
     """
 
 
+def asset_status_section(status: dict) -> str:
+    return f"""
+    <section class="score-strip">
+      {score_box("Clip Count", status.get("clip_count", 0))}
+      {score_box("Real Clips", status.get("real_clip_count", 0))}
+      {score_box("Video Provider", status.get("video_provider", ""))}
+      {score_box("Audio Provider", status.get("audio_provider", ""))}
+      {score_box("Publish Ready", "Yes" if status.get("publish_ready") else "No")}
+    </section>
+    """
+
+
 def tts_integrity_section(status: dict) -> str:
     matches = status.get("audio_matches_current_text")
     match_label = "Matches current voiceover.txt" if matches else "Does not match current voiceover.txt"
@@ -502,8 +555,12 @@ def tts_integrity_section(status: dict) -> str:
     """
 
 
-def clip_section(output_dir: Path, video_dir: Path, manifest: dict) -> str:
-    clips = manifest.get("clips", [])
+def clip_section(output_dir: Path, video_dir: Path, manifest: dict, result: dict) -> str:
+    clips = result.get("clips") or manifest.get("clips", [])
+    clip_count = result.get("clip_count", manifest.get("clip_count", 0))
+    real_clip_count = result.get("real_clip_count", manifest.get("real_clip_count", 0))
+    publish_ready = result.get("publish_ready", manifest.get("publish_ready", False))
+    provider = result.get("provider", manifest.get("provider", "unknown"))
     if not clips:
         return '<section class="timeline-section"><h2>Video Clips</h2><div class="visual-warning">REAL VIDEO CLIPS NOT GENERATED</div></section>'
     cards = []
@@ -531,14 +588,17 @@ def clip_section(output_dir: Path, video_dir: Path, manifest: dict) -> str:
     <section class="timeline-section">
       <div class="section-title-row">
         <h2>Video Clips</h2>
-        <span class="pill">Provider: {_e(manifest.get("provider", "unknown"))}</span>
+        <span class="pill">Provider: {_e(provider)}</span>
+        <span class="pill">clip_count: {_e(clip_count)}</span>
+        <span class="pill">real_clip_count: {_e(real_clip_count)}</span>
+        <span class="pill">publish_ready: {_e(publish_ready)}</span>
       </div>
       <div class="timeline-grid">{''.join(cards)}</div>
     </section>
     """
 
 
-def scene_timeline(output_dir: Path, video_dir: Path, manifest: dict) -> str:
+def scene_timeline(output_dir: Path, video_dir: Path, manifest: dict, asset_status: dict | None = None) -> str:
     scenes = manifest.get("scenes", [])
     if not scenes:
         return '<section class="timeline-section"><h2>Scene Timeline</h2><div class="visual-warning">VISUALS NOT GENERATED</div></section>'
@@ -572,7 +632,7 @@ def scene_timeline(output_dir: Path, video_dir: Path, manifest: dict) -> str:
         <span class="pill">{len(scenes)} scenes</span>
         <span class="pill">Provider: {_e(manifest.get("provider_selected", "unknown"))}</span>
       </div>
-      {_placeholder_warning(manifest)}
+      {_placeholder_warning(manifest, asset_status or {})}
       <div class="timeline-grid">{''.join(cards)}</div>
     </section>
     """
@@ -584,7 +644,9 @@ def _placeholder_visuals(manifest: dict, visual_result: dict) -> bool:
     return "placeholder" in providers
 
 
-def _placeholder_warning(manifest: dict) -> str:
+def _placeholder_warning(manifest: dict, asset_status: dict | None = None) -> str:
+    if asset_status and not asset_status.get("placeholder_warning"):
+        return ""
     if any(scene.get("provider") == "placeholder" for scene in manifest.get("scenes", [])):
         return '<div class="visual-warning">Placeholder visuals only — not ready for publishing.</div>'
     return ""
@@ -712,11 +774,11 @@ def _thumbnail_html(output_dir: Path, video_dir: Path) -> str:
 def _video_html(output_dir: Path, path: Path, missing_text: str) -> str:
     if not path.exists():
         return f'<div class="missing">{_e(missing_text)}</div>'
-    media_url = "/media?path=" + urllib.parse.quote(str(path.relative_to(output_dir)))
+    media_url = _media_url(output_dir, path, cache_bust=True)
     poster = ""
     poster_path = path.parent / ("preview-thumbnail.jpg" if path.name == "preview.mp4" else "thumbnail.jpg")
     if poster_path.exists():
-        poster_url = "/media?path=" + urllib.parse.quote(str(poster_path.relative_to(output_dir)))
+        poster_url = _media_url(output_dir, poster_path, cache_bust=True)
         poster = f' poster="{poster_url}"'
     return f'<video controls preload="metadata"{poster} src="{media_url}"></video>'
 
@@ -724,15 +786,22 @@ def _video_html(output_dir: Path, path: Path, missing_text: str) -> str:
 def _audio_html(output_dir: Path, path: Path) -> str:
     if not path.exists():
         return '<div class="missing">voiceover.mp3 missing. Use Generate Voiceover after configuring TTS, or run mock mode to verify the workflow.</div>'
-    media_url = "/media?path=" + urllib.parse.quote(str(path.relative_to(output_dir)))
+    media_url = _media_url(output_dir, path)
     return f'<audio controls preload="metadata" src="{media_url}"></audio>'
 
 
 def _download_link(output_dir: Path, path: Path) -> str:
     if not path.exists():
         return ""
-    media_url = "/media?path=" + urllib.parse.quote(str(path.relative_to(output_dir))) + "&download=1"
+    media_url = _media_url(output_dir, path) + "&download=1"
     return f'<a class="download-link" href="{media_url}">Download final.mp4</a>'
+
+
+def _media_url(output_dir: Path, path: Path, cache_bust: bool = False) -> str:
+    url = "/media?path=" + urllib.parse.quote(str(path.relative_to(output_dir)))
+    if cache_bust:
+        url += "&v=" + str(int(path.stat().st_mtime))
+    return url
 
 
 def _read_json(path: Path) -> dict:
