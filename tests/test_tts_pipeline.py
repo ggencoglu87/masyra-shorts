@@ -27,6 +27,26 @@ class FakeTTSProvider:
         }
 
 
+class FailingElevenLabsProvider:
+    name = "elevenlabs"
+
+    def synthesize(self, text: str, output_path: Path) -> dict:
+        raise RuntimeError("ElevenLabs API error 429: quota_exceeded")
+
+
+class FakePiperProvider:
+    name = "piper"
+
+    def synthesize(self, text: str, output_path: Path) -> dict:
+        output_path.write_bytes(f"piper audio for: {text}".encode("utf-8"))
+        return {
+            "provider": self.name,
+            "created": True,
+            "output": str(output_path),
+            "warning": None,
+        }
+
+
 class TTSPipelineTests(unittest.TestCase):
     def test_generate_tts_all_uses_each_package_voiceover_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -71,6 +91,25 @@ class TTSPipelineTests(unittest.TestCase):
         self.assertNotEqual(first["generated_audio_hash"], third["generated_audio_hash"])
         self.assertTrue(third["created"])
         self.assertTrue(third["audio_matches_current_text"])
+
+    def test_elevenlabs_quota_failure_falls_back_to_piper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = Path(tmp) / "video"
+            video_dir.mkdir()
+            (video_dir / "voiceover.txt").write_text("Fallback narration.", encoding="utf-8")
+
+            with patch(
+                "shorts_automation.tts.get_tts_fallback_chain",
+                return_value=[FailingElevenLabsProvider(), FakePiperProvider()],
+            ):
+                result = synthesize_voiceover(video_dir, provider_name="elevenlabs")
+
+        self.assertTrue(result["created"])
+        self.assertEqual(result["requested_provider"], "elevenlabs")
+        self.assertEqual(result["provider_used"], "piper")
+        self.assertTrue(result["audio_matches_current_text"])
+        self.assertEqual(result["fallback_attempts"][0]["provider"], "elevenlabs")
+        self.assertEqual(result["fallback_attempts"][1]["provider"], "piper")
 
 
 if __name__ == "__main__":

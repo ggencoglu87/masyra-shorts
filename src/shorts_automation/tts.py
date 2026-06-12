@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import urllib.error
 import urllib.request
+import wave
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,16 +44,17 @@ class UnavailableTTSProvider(TTSProvider):
 class MockTTSProvider(TTSProvider):
     name = "mock"
 
-    def __init__(self, reason: str = "Mock TTS does not create audio. voiceover.txt remains the source of truth.") -> None:
+    def __init__(self, reason: str = "Mock TTS created placeholder silent audio. Configure ElevenLabs or Piper for production voice.") -> None:
         self.reason = reason
 
     def synthesize(self, text: str, output_path: Path) -> dict:
+        _write_mock_audio(output_path, text)
         status_path = output_path.with_suffix(".mock.json")
         status_path.write_text(
             json.dumps(
                 {
                     "provider": self.name,
-                    "audio_created": False,
+                    "audio_created": True,
                     "warning": self.reason,
                     "text_preview": text[:240],
                 },
@@ -63,8 +65,8 @@ class MockTTSProvider(TTSProvider):
         )
         return {
             "provider": self.name,
-            "created": False,
-            "output": None,
+            "created": True,
+            "output": str(output_path),
             "warning": self.reason,
         }
 
@@ -223,6 +225,19 @@ def get_tts_provider(name: str) -> TTSProvider | None:
     raise ValueError(f"Unknown TTS provider: {name}")
 
 
+def get_tts_fallback_chain(name: str) -> list[TTSProvider]:
+    normalized = (name or "elevenlabs").lower()
+    if normalized in {"off", "none"}:
+        return []
+    if normalized == "elevenlabs":
+        return [get_tts_provider("elevenlabs"), PiperTTSProvider(), MockTTSProvider()]  # type: ignore[list-item]
+    if normalized == "piper":
+        return [PiperTTSProvider(), MockTTSProvider()]
+    if normalized == "mock":
+        return [MockTTSProvider()]
+    return [get_tts_provider(normalized), PiperTTSProvider(), MockTTSProvider()]  # type: ignore[list-item]
+
+
 def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = False) -> dict:
     video_dir = video_dir.resolve()
     voiceover_text = video_dir / "voiceover.txt"
@@ -231,7 +246,9 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
 
     if not voiceover_text.exists():
         result = {
+            "requested_provider": provider_name,
             "provider": provider_name,
+            "provider_used": None,
             "created": False,
             "output": None,
             "source_text_hash": None,
@@ -245,11 +262,14 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
     source_text_hash = _text_hash(text)
     previous = _read_json(result_path)
     previous_hash = previous.get("source_text_hash")
+    previous_audio_hash = previous.get("generated_audio_hash")
     audio_hash = _file_hash(output_path)
 
-    if output_path.exists() and not force and previous_hash == source_text_hash:
+    if output_path.exists() and not force and previous_hash == source_text_hash and previous_audio_hash == audio_hash:
         result = {
-            "provider": previous.get("provider", provider_name),
+            "requested_provider": previous.get("requested_provider", provider_name),
+            "provider": previous.get("provider_used") or previous.get("provider", provider_name),
+            "provider_used": previous.get("provider_used") or previous.get("provider", provider_name),
             "created": False,
             "skipped": True,
             "output": str(output_path),
@@ -261,13 +281,15 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
         return _write_tts_result(video_dir, result_path, result, force=force)
 
     stale_audio_warning = None
-    if output_path.exists() and not force and previous_hash != source_text_hash:
-        stale_audio_warning = "voiceover.txt changed since voiceover.mp3 was created; regenerating audio."
+    if output_path.exists() and not force and (previous_hash != source_text_hash or previous_audio_hash != audio_hash):
+        stale_audio_warning = "voiceover.txt or voiceover.mp3 changed since TTS was created; regenerating audio."
 
-    provider = get_tts_provider(provider_name)
-    if provider is None:
+    providers = [provider for provider in get_tts_fallback_chain(provider_name) if provider is not None]
+    if not providers:
         result = {
+            "requested_provider": provider_name,
             "provider": "off",
+            "provider_used": None,
             "created": False,
             "output": None,
             "source_text_hash": source_text_hash,
@@ -279,7 +301,9 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
 
     if not text:
         result = {
-            "provider": provider.name,
+            "requested_provider": provider_name,
+            "provider": providers[0].name,
+            "provider_used": None,
             "created": False,
             "output": None,
             "source_text_hash": source_text_hash,
@@ -289,15 +313,44 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
         }
         return _write_tts_result(video_dir, result_path, result, force=force)
 
-    try:
-        result = provider.synthesize(text=text, output_path=output_path)
-    except Exception as exc:  # Network/API failures should not break package generation.
-        result = {
-            "provider": provider.name,
-            "created": False,
-            "output": None,
-            "warning": f"TTS failed for {video_dir.name}: {exc}",
-        }
+    attempts = []
+    result = {
+        "requested_provider": provider_name,
+        "provider": providers[0].name,
+        "provider_used": None,
+        "created": False,
+        "output": None,
+        "warning": "No TTS provider created audio.",
+    }
+    for provider in providers:
+        try:
+            attempt = provider.synthesize(text=text, output_path=output_path)
+        except Exception as exc:  # Network/API failures should not break package generation.
+            warning = f"TTS failed for {video_dir.name} with {provider.name}: {exc}"
+            attempts.append({"provider": provider.name, "created": False, "warning": warning})
+            if provider.name == "elevenlabs" and not _should_fallback_from_elevenlabs(exc):
+                continue
+            continue
+
+        attempts.append(
+            {
+                "provider": provider.name,
+                "created": bool(attempt.get("created")),
+                "warning": attempt.get("warning"),
+            }
+        )
+        if attempt.get("created") and output_path.exists():
+            result = {
+                **attempt,
+                "requested_provider": provider_name,
+                "provider": provider.name,
+                "provider_used": provider.name,
+                "fallback_attempts": attempts,
+            }
+            break
+
+    if not result.get("created"):
+        result["fallback_attempts"] = attempts
 
     result = {
         "source_text_hash": source_text_hash,
@@ -322,7 +375,29 @@ def synthesize_voiceovers(video_root: Path, provider_name: str, force: bool = Fa
 
 
 def synthesize_voiceovers_for_dirs(video_dirs: list[Path], provider_name: str, force: bool = False) -> dict:
-    results = [synthesize_voiceover(video_dir, provider_name=provider_name, force=force) for video_dir in video_dirs]
+    results = []
+    for video_dir in video_dirs:
+        try:
+            results.append(synthesize_voiceover(video_dir, provider_name=provider_name, force=force))
+        except Exception as exc:
+            results.append(
+                _write_tts_result(
+                    video_dir.resolve(),
+                    video_dir.resolve() / "tts-result.json",
+                    {
+                        "requested_provider": provider_name,
+                        "provider": provider_name,
+                        "provider_used": None,
+                        "created": False,
+                        "output": None,
+                        "source_text_hash": None,
+                        "generated_audio_hash": None,
+                        "audio_matches_current_text": False,
+                        "warning": f"TTS package failed without stopping batch: {exc}",
+                    },
+                    force=force,
+                )
+            )
     return {
         "provider": provider_name,
         "attempted": len(results),
@@ -352,11 +427,15 @@ def tts_status(video_dir: Path) -> dict:
     current_hash = _text_hash(voiceover_text.read_text(encoding="utf-8").strip()) if voiceover_text.exists() else None
     recorded_hash = result.get("source_text_hash")
     audio_hash = _file_hash(output_path)
+    recorded_audio_hash = result.get("generated_audio_hash")
     return {
         "source_text_hash": current_hash,
         "recorded_source_text_hash": recorded_hash,
-        "generated_audio_hash": result.get("generated_audio_hash") or audio_hash,
-        "audio_matches_current_text": bool(output_path.exists() and current_hash and recorded_hash == current_hash),
+        "generated_audio_hash": recorded_audio_hash or audio_hash,
+        "current_audio_hash": audio_hash,
+        "audio_matches_current_text": bool(output_path.exists() and current_hash and recorded_hash == current_hash and recorded_audio_hash == audio_hash),
+        "requested_provider": result.get("requested_provider") or result.get("provider"),
+        "provider_used": result.get("provider_used") or result.get("provider"),
     }
 
 
@@ -381,3 +460,24 @@ def _read_json(path: Path) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {}
+
+
+def _should_fallback_from_elevenlabs(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in ["quota_exceeded", "billing", "401", "429"])
+
+
+def _write_mock_audio(output_path: Path, text: str) -> None:
+    # WAV content is intentionally written to the requested file path so FFmpeg can
+    # still probe it even when the extension is .mp3.
+    seed = hashlib.sha256(text.encode("utf-8")).digest()
+    frames = bytearray()
+    for index in range(16000):
+        byte = seed[index % len(seed)]
+        sample = (byte - 128) * 6
+        frames.extend(int(sample).to_bytes(2, byteorder="little", signed=True))
+    with wave.open(str(output_path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16000)
+        wav.writeframes(bytes(frames))

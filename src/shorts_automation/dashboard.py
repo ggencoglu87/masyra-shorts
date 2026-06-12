@@ -266,7 +266,8 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     voiceover_mp3 = video_dir / "voiceover.mp3"
     tts_result = _read_json(video_dir / "tts-result.json")
     tts_integrity = tts_status(video_dir)
-    tts_provider = tts_result.get("provider", "not generated")
+    requested_tts_provider = tts_result.get("requested_provider") or tts_result.get("provider", "not generated")
+    provider_used = tts_result.get("provider_used") or tts_result.get("provider", "not generated")
     rel = str(video_dir.relative_to(output_dir))
     download = _download_link(output_dir, final_mp4)
     visual_warning = ""
@@ -349,7 +350,8 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
             <h2>Quick Preview</h2>
             {_video_html(output_dir, preview_mp4, "No preview.mp4 yet")}
             <h2>Voiceover Audio</h2>
-            <p class="muted">TTS provider: {_e(tts_provider)}</p>
+            <p class="muted">Requested provider: {_e(requested_tts_provider)}</p>
+            <p class="muted">Actual provider used: {_e(provider_used)}</p>
             {tts_integrity_section(tts_integrity)}
             {_audio_html(output_dir, voiceover_mp3)}
           </div>
@@ -483,12 +485,18 @@ def tts_integrity_section(status: dict) -> str:
     <div class="tts-integrity">
       <span class="pill {match_class}">{_e(match_label)}</span>
       <dl>
+        <dt>Requested provider</dt>
+        <dd>{_e(status.get("requested_provider") or "missing")}</dd>
+        <dt>Actual provider used</dt>
+        <dd>{_e(status.get("provider_used") or "missing")}</dd>
         <dt>Current source hash</dt>
         <dd>{_e(status.get("source_text_hash") or "missing")}</dd>
         <dt>Recorded source hash</dt>
         <dd>{_e(status.get("recorded_source_text_hash") or "missing")}</dd>
         <dt>Generated audio hash</dt>
         <dd>{_e(status.get("generated_audio_hash") or "missing")}</dd>
+        <dt>Current audio hash</dt>
+        <dd>{_e(status.get("current_audio_hash") or "missing")}</dd>
       </dl>
     </div>
     """
