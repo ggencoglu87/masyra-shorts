@@ -8,6 +8,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .ai_video import default_ai_video_provider, generate_ai_videos_for_package, load_ai_video_result
 from .quality import load_quality_score, score_video_package
 from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render_video_package
 from .status_store import DEFAULT_STATUS, StatusStore, VALID_STATUSES
@@ -109,6 +110,8 @@ def serve_dashboard(output_dir: Path, host: str = "127.0.0.1", port: int = 8765)
                 generate_video_clips_for_package(video_dir, provider_name=params.get("provider", [default_video_provider()])[0], force=False)
             elif action == "generate_tts":
                 synthesize_voiceover(video_dir, provider_name=params.get("provider", [_dashboard_tts_provider()])[0], force=False)
+            elif action == "generate_ai_video":
+                generate_ai_videos_for_package(video_dir, provider_name=params.get("provider", [default_ai_video_provider()])[0], force=False)
             elif action == "rerender":
                 render_video_package(video_dir, duration_seconds=PREVIEW_DURATION_SECONDS, preview=True)
                 render_video_package(video_dir, duration_seconds=DEFAULT_DURATION_SECONDS, preview=False)
@@ -120,6 +123,11 @@ def serve_dashboard(output_dir: Path, host: str = "127.0.0.1", port: int = 8765)
                 score_video_package(video_dir)
             elif action == "rerender_audio":
                 synthesize_voiceover(video_dir, provider_name=params.get("provider", [_dashboard_tts_provider()])[0], force=False)
+                render_video_package(video_dir, duration_seconds=PREVIEW_DURATION_SECONDS, preview=True)
+                render_video_package(video_dir, duration_seconds=DEFAULT_DURATION_SECONDS, preview=False)
+                score_video_package(video_dir)
+            elif action == "rerender_ai_video":
+                generate_ai_videos_for_package(video_dir, provider_name=params.get("provider", [default_ai_video_provider()])[0], force=False)
                 render_video_package(video_dir, duration_seconds=PREVIEW_DURATION_SECONDS, preview=True)
                 render_video_package(video_dir, duration_seconds=DEFAULT_DURATION_SECONDS, preview=False)
                 score_video_package(video_dir)
@@ -233,6 +241,8 @@ def render_package_card(output_dir: Path, package: dict) -> str:
           <span class="pill status-{slug(package["status"])}">{_e(package["status"])}</span>
           <span class="pill">{_e(package["category"])}</span>
           {visual_badge(package)}
+          {ai_video_badge(package["asset_status"].get("ai_videos_ready"))}
+          {character_badge(package["asset_status"].get("character_bible_ready"))}
           {audio_badge(package["audio_ready"])}
           {clip_badge(package["clips_ready"])}
         </div>
@@ -261,9 +271,11 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     prompts = _read_json(video_dir / "asset-prompts.json")
     storyboard = _read_json(video_dir / "storyboard.json")
     captions = _read_json(video_dir / "captions.json")
+    character_bible = _read_json(video_dir / "character_bible.json")
     manifest = load_scene_manifest(video_dir)
     clip_manifest = load_clip_manifest(video_dir)
     clip_result = load_clip_result(video_dir)
+    ai_video_result = load_ai_video_result(video_dir)
     visual_result = load_visual_result(video_dir)
     quality = load_quality_score(video_dir)
     status_data = store.get(video_dir)
@@ -333,6 +345,12 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
             </form>
             <form class="production-actions" method="post" action="/action">
               <input type="hidden" name="dir" value="{_e(rel)}">
+              <input type="hidden" name="action" value="generate_ai_video">
+              <input type="hidden" name="provider" value="{_e(default_ai_video_provider())}">
+              <button type="submit">Generate AI Videos</button>
+            </form>
+            <form class="production-actions" method="post" action="/action">
+              <input type="hidden" name="dir" value="{_e(rel)}">
               <input type="hidden" name="action" value="generate_tts">
               <input type="hidden" name="provider" value="{_e(_dashboard_tts_provider())}">
               <button type="submit">Generate Voiceover</button>
@@ -353,6 +371,12 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
               <input type="hidden" name="action" value="rerender_audio">
               <input type="hidden" name="provider" value="{_e(_dashboard_tts_provider())}">
               <button type="submit">Re-render With Audio</button>
+            </form>
+            <form class="production-actions" method="post" action="/action">
+              <input type="hidden" name="dir" value="{_e(rel)}">
+              <input type="hidden" name="action" value="rerender_ai_video">
+              <input type="hidden" name="provider" value="{_e(default_ai_video_provider())}">
+              <button type="submit">Re-render From AI Videos</button>
             </form>
             <h2>Quick Preview</h2>
             {_video_html(output_dir, preview_mp4, "No preview.mp4 yet")}
@@ -376,13 +400,17 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
         </section>
         {quality_section(quality)}
         {asset_status_section(asset_status)}
+        {character_bible_section(character_bible)}
         {storyboard_section(storyboard)}
         {captions_section(captions)}
         {voice_profile_section(plan)}
+        {ai_video_section(output_dir, video_dir, ai_video_result)}
         {clip_section(output_dir, video_dir, clip_manifest, clip_result)}
         {scene_timeline(output_dir, video_dir, manifest, asset_status)}
         {file_section("video-clips-manifest.json", json.dumps(clip_manifest, ensure_ascii=False, indent=2))}
         {file_section("video-clips-result.json", json.dumps(clip_result, ensure_ascii=False, indent=2))}
+        {file_section("ai-video-result.json", json.dumps(ai_video_result, ensure_ascii=False, indent=2))}
+        {file_section("character_bible.json", json.dumps(character_bible, ensure_ascii=False, indent=2))}
         {file_section("quality-score.json", json.dumps(quality, ensure_ascii=False, indent=2))}
         {file_section("visual-result.json", json.dumps(visual_result, ensure_ascii=False, indent=2))}
         {file_section("script.txt", _read_text(video_dir / "script.txt"))}
@@ -450,10 +478,13 @@ def status_button(status: str, label: str) -> str:
 
 def dashboard_asset_status(video_dir: Path) -> dict:
     clip_result = load_clip_result(video_dir)
+    ai_video_result = load_ai_video_result(video_dir)
     visual_result = load_visual_result(video_dir)
     scene_manifest = load_scene_manifest(video_dir)
     tts_result = _read_json(video_dir / "tts-result.json")
     final_exists = (video_dir / "final.mp4").exists()
+    ai_generated_count = int(ai_video_result.get("generated_count", 0) or 0)
+    ai_videos_ready = ai_generated_count >= 4
     real_clip_count = int(clip_result.get("real_clip_count", 0) or 0)
     clip_count = int(clip_result.get("clip_count", 0) or 0)
     clips_ready = real_clip_count >= 3 and final_exists
@@ -461,9 +492,25 @@ def dashboard_asset_status(video_dir: Path) -> dict:
     placeholder_visuals = _placeholder_visuals(scene_manifest, visual_result)
     audio_ready = bool(tts_result.get("audio_matches_current_text"))
     provider_used = tts_result.get("provider_used") or tts_result.get("provider")
-    publish_ready = bool(clip_result.get("publish_ready")) and clips_ready and audio_ready
+    ai_movie_ready = bool(
+        ai_videos_ready
+        and final_exists
+        and ai_video_result.get("character_consistency_score", 0) >= 75
+        and ai_video_result.get("visual_quality_score", 0) >= 75
+        and ai_video_result.get("motion_quality_score", 0) >= 70
+    )
+    publish_ready = bool(ai_movie_ready and audio_ready)
     return {
+        "character_bible_ready": (video_dir / "character_bible.json").exists(),
         "final_mp4": final_exists,
+        "ai_videos_ready": ai_videos_ready,
+        "ai_movie_ready": ai_movie_ready,
+        "ai_video_provider": ai_video_result.get("provider", "off"),
+        "ai_scene_count": int(ai_video_result.get("scene_count", 0) or 0),
+        "ai_generated_count": ai_generated_count,
+        "character_consistency_score": ai_video_result.get("character_consistency_score", 0),
+        "visual_quality_score": ai_video_result.get("visual_quality_score", 0),
+        "motion_quality_score": ai_video_result.get("motion_quality_score", 0),
         "clip_count": clip_count,
         "real_clip_count": real_clip_count,
         "clips_ready": clips_ready,
@@ -475,18 +522,32 @@ def dashboard_asset_status(video_dir: Path) -> dict:
         "real_openai_visuals_ready": real_openai_visuals_ready,
         "placeholder_visuals": placeholder_visuals,
         "placeholder_warning": bool(not clips_ready and not real_openai_visuals_ready and placeholder_visuals),
-        "visuals_ready": bool(clips_ready or real_openai_visuals_ready),
+        "visuals_ready": bool(ai_videos_ready or clips_ready or real_openai_visuals_ready),
         "publish_ready": publish_ready,
     }
 
 
 def visual_badge(package: dict) -> str:
     status = package.get("asset_status", {})
+    if status.get("ai_videos_ready"):
+        return '<span class="pill status-approved">AI Videos Ready</span>'
     if status.get("clips_ready"):
-        return '<span class="pill status-approved">Real Video Clips Used</span>'
+        return '<span class="pill status-needs-edit">Stock Fallback Used</span>'
     if status.get("real_openai_visuals_ready"):
         return '<span class="pill status-approved">OpenAI Visuals Ready</span>'
     return '<span class="pill status-rejected">VISUALS NOT GENERATED</span>'
+
+
+def ai_video_badge(ready: bool) -> str:
+    if ready:
+        return '<span class="pill status-approved">AI Movie Mode</span>'
+    return '<span class="pill status-needs-edit">AI Videos Missing</span>'
+
+
+def character_badge(ready: bool) -> str:
+    if ready:
+        return '<span class="pill status-approved">Character Bible Ready</span>'
+    return '<span class="pill status-needs-edit">Character Bible Missing</span>'
 
 
 def audio_badge(ready: bool) -> str:
@@ -536,11 +597,75 @@ def quality_section(quality: dict) -> str:
 def asset_status_section(status: dict) -> str:
     return f"""
     <section class="score-strip">
+      {score_box("AI Provider", status.get("ai_video_provider", ""))}
+      {score_box("AI Scenes", f"{status.get('ai_generated_count', 0)}/{status.get('ai_scene_count', 0)}")}
+      {score_box("Character Consistency", status.get("character_consistency_score", 0))}
+      {score_box("Motion Quality", status.get("motion_quality_score", 0))}
       {score_box("Clip Count", status.get("clip_count", 0))}
       {score_box("Real Clips", status.get("real_clip_count", 0))}
       {score_box("Video Provider", status.get("video_provider", ""))}
       {score_box("Audio Provider", status.get("audio_provider", ""))}
       {score_box("Publish Ready", "Yes" if status.get("publish_ready") else "No")}
+    </section>
+    """
+
+
+def character_bible_section(bible: object) -> str:
+    if not isinstance(bible, dict) or not bible.get("characters"):
+        return '<section class="timeline-section"><h2>Character Bible</h2><div class="missing">No character_bible.json yet.</div></section>'
+    cards = []
+    for character in bible.get("characters", []):
+        cards.append(
+            f"""
+            <article class="scene-card">
+              <div class="scene-body">
+                <div class="scene-meta">
+                  <span>{_e(character.get("id", ""))}</span>
+                  <span>{_e(character.get("role", ""))}</span>
+                </div>
+                <p><strong>{_e(character.get("name", ""))}</strong></p>
+                <p>{_e(character.get("visual_description", character.get("appearance", "")))}</p>
+                <p>hash: {_e(character.get("appearance_hash", ""))}</p>
+              </div>
+            </article>
+            """
+        )
+    return f'<section class="timeline-section"><h2>Character Bible</h2><p class="muted">{_e(bible.get("style", ""))}</p><div class="timeline-grid">{"".join(cards)}</div></section>'
+
+
+def ai_video_section(output_dir: Path, video_dir: Path, result: dict) -> str:
+    scenes = result.get("scenes", []) if isinstance(result, dict) else []
+    if not scenes:
+        return '<section class="timeline-section"><h2>AI Scene Videos</h2><div class="visual-warning">AI VIDEOS NOT GENERATED</div></section>'
+    cards = []
+    for scene in scenes:
+        path = video_dir / scene.get("file", "")
+        media = '<div class="scene-missing">Missing AI video</div>'
+        if path.exists():
+            media = f'<video controls muted preload="metadata" class="scene-image" src="{_media_url(output_dir, path, cache_bust=True)}"></video>'
+        cards.append(
+            f"""
+            <article class="scene-card">
+              {media}
+              <div class="scene-body">
+                <div class="scene-meta">
+                  <span>Scene {_e(scene.get("scene", ""))}</span>
+                  <span>{_e(scene.get("provider", ""))}</span>
+                </div>
+                <p>{_e(scene.get("warning", ""))}</p>
+              </div>
+            </article>
+            """
+        )
+    return f"""
+    <section class="timeline-section">
+      <div class="section-title-row">
+        <h2>AI Scene Videos</h2>
+        <span class="pill">Provider: {_e(result.get("provider", "unknown"))}</span>
+        <span class="pill">Generated: {_e(result.get("generated_count", 0))}/{_e(result.get("scene_count", 0))}</span>
+        <span class="pill">AI movie ready: {_e(result.get("ai_movie_ready", False))}</span>
+      </div>
+      <div class="timeline-grid">{''.join(cards)}</div>
     </section>
     """
 

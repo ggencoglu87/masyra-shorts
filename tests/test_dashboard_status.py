@@ -62,9 +62,9 @@ class DashboardStatusTests(unittest.TestCase):
 
         self.assertTrue(rows[0]["clips_ready"])
         self.assertTrue(rows[0]["audio_ready"])
-        self.assertTrue(rows[0]["publish_ready"])
+        self.assertFalse(rows[0]["publish_ready"])
         self.assertIn("Clips Ready", card)
-        self.assertIn("Real Video Clips Used", card)
+        self.assertIn("Stock Fallback Used", card)
         self.assertIn("Voiceover Ready", card)
         self.assertIn("Actual provider used: piper", detail)
         self.assertIn("clip_count", detail)

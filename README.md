@@ -41,6 +41,54 @@ Her paket artik ek olarak sunlari uretir:
 
 `daily-run` v3'te full pipeline calistirmaya ayarlidir: trend/story/storyboard/clips/visuals/voice/captions/render/score. Plan-only calismak icin `--no-render` kullan.
 
+## V4 AI Character Movie Engine
+
+V4 primary pipeline stock footage degildir:
+
+```text
+character_bible.json
+-> story generator
+-> storyboard.json
+-> scene image prompts
+-> AI scene images
+-> AI scene videos
+-> voiceover
+-> word captions
+-> final.mp4
+```
+
+Her video paketi 2-3 recurring character uretir ve `character_bible.json` icinde `character_id`, exact appearance, style reference ve `appearance_hash` saklar. Storyboard scene promptlari ayni character appearance metnini tekrar eder; bu, Bob the cat gibi karakterlerin her sahnede ayni gorunmesini hedefler.
+
+Yeni dosyalar:
+
+- `character_bible.json`
+- `voice_profile.json`
+- `scene-image-result.json`
+- `scene-videos/scene-01.mp4` vb.
+- `ai-video-result.json`
+
+Renderer onceligi:
+
+1. AI scene videos
+2. AI character scene images with Ken Burns
+3. Stock clips fallback
+4. Placeholder test fallback
+
+AI video provider ayarlari:
+
+```powershell
+AI_VIDEO_PROVIDER=off
+AI_VIDEO_PROVIDER_PRIORITY=veo,kling,runway,pixverse,hailuo
+GOOGLE_AI_API_KEY=
+VEO_MODEL=veo-3-fast
+KLING_API_KEY=
+RUNWAY_API_KEY=
+PIXVERSE_API_KEY=
+HAILUO_API_KEY=
+```
+
+AI video provider `off` ise sistem hata vermez; scene images uretilir, image-based render denenir ve `ai-video-result.json` icinde `ai_movie_ready=false` yazilir.
+
 ## Kaynaklar
 
 - YouTube Trends: `videos.list chart=mostPopular`
@@ -94,7 +142,7 @@ Mevcut surum her trend icin su dosyalari hazirlar:
 
 Sistem her paket icin `asset-prompts.json` uretir. Render istenirse once bu promptlardan 4-8 adet sahne gorseli uretilir:
 
-Stock video pipeline birinci onceliktir. `VIDEO_PROVIDER=auto`, `PEXELS_API_KEY` varsa Pexels Videos, yoksa `PIXABAY_API_KEY` varsa Pixabay Videos kullanir. Bulunan klipler `video-clips/` altina indirilir ve `video-clips-manifest.json` icine kaynak, query, provider ve attribution metadata yazilir. Pexels API `Authorization` header ister; Pixabay video arama API'si `key` query parametresi kullanir.
+Stock video pipeline artik fallback'tir. `VIDEO_PROVIDER=auto`, `PEXELS_API_KEY` varsa Pexels Videos, yoksa `PIXABAY_API_KEY` varsa Pixabay Videos kullanir. Bulunan klipler `video-clips/` altina indirilir ve `video-clips-manifest.json` icine kaynak, query, provider ve attribution metadata yazilir. Pexels API `Authorization` header ister; Pixabay video arama API'si `key` query parametresi kullanir.
 
 - `VISUAL_PROVIDER=openai`: `OPENAI_API_KEY` ile OpenAI Images kullanir ve publish-ready sahne gorselleri uretir.
 - `VISUAL_PROVIDER=auto`: OpenAI key varsa OpenAI Images, yoksa local placeholder fallback kullanir.

@@ -412,6 +412,7 @@ def _write_visual_result(video_dir: Path, result: dict) -> dict:
         **result,
     }
     (video_dir / "visual-result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    (video_dir / "scene-image-result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return result
 
 

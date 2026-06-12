@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from .ai_video import ai_scene_videos_available, load_ai_video_result
 from .stock_videos import load_clip_manifest, load_clip_result, video_clips_available
 from .visuals import load_scene_manifest, visuals_available
 
@@ -50,6 +51,16 @@ def render_video_package(
         return _failed(video_dir, "video-plan.json not found")
 
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    ai_video_paths = _ai_scene_video_paths(video_dir)
+    if len(ai_video_paths) >= 4:
+        return _render_ai_scene_video(
+            video_dir=video_dir,
+            plan=plan,
+            video_paths=ai_video_paths,
+            duration_seconds=duration_seconds,
+            preview=preview,
+        )
+
     clip_paths = _video_clip_paths(video_dir)
     if len(clip_paths) >= 3:
         return _render_clip_video(
@@ -151,6 +162,85 @@ def render_video_package(
             "REAL VIDEO CLIPS AND VISUALS NOT GENERATED: rendered fallback background.",
             None if voiceover_path.exists() else "Rendered silent video: voiceover.mp3 not found.",
         ),
+    }
+
+
+def _render_ai_scene_video(
+    *,
+    video_dir: Path,
+    plan: dict,
+    video_paths: list[Path],
+    duration_seconds: int,
+    preview: bool,
+) -> dict:
+    voiceover_path = video_dir / "voiceover.mp3"
+    output_path = video_dir / ("preview.mp4" if preview else "final.mp4")
+    thumbnail_path = video_dir / ("preview-thumbnail.jpg" if preview else "thumbnail.jpg")
+    width = PREVIEW_WIDTH if preview else WIDTH
+    height = PREVIEW_HEIGHT if preview else HEIGHT
+    selected_videos, scene_duration = _select_scene_timing(video_paths, duration_seconds)
+    subtitle_text = clean_subtitle_text(plan, duration_seconds)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        render_subtitles_path = Path(temp_dir) / "render-subtitles.srt"
+        render_subtitles_path.write_text(make_render_subtitles(subtitle_text, duration_seconds), encoding="utf-8")
+        command = ["ffmpeg", "-y"]
+        for scene_path in selected_videos:
+            command.extend(["-stream_loop", "-1", "-t", f"{scene_duration:.3f}", "-i", str(scene_path)])
+        audio_index = len(selected_videos)
+        if voiceover_path.exists():
+            command.extend(["-i", str(voiceover_path)])
+        filtergraph = _clip_filtergraph(
+            clip_count=len(selected_videos),
+            width=width,
+            height=height,
+            subtitles_path=render_subtitles_path,
+            preview=preview,
+        )
+        command.extend(["-filter_complex", filtergraph, "-map", "[vout]"])
+        if voiceover_path.exists():
+            command.extend(["-map", f"{audio_index}:a:0", "-c:a", "aac", "-b:a", "160k", "-shortest"])
+        command.extend(
+            [
+                "-t",
+                str(duration_seconds),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast" if preview else "medium",
+                "-crf",
+                "25" if preview else "20",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(output_path),
+            ]
+        )
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=300)
+
+    if completed.returncode != 0:
+        return {
+            "video_dir": str(video_dir),
+            "rendered": False,
+            "output": None,
+            "warning": "FFmpeg AI scene video render failed.",
+            "stderr": completed.stderr[-2000:],
+            "ai_scene_videos_used": True,
+        }
+
+    thumbnail_result = _create_thumbnail(output_path, thumbnail_path)
+    return {
+        "video_dir": str(video_dir),
+        "rendered": True,
+        "output": str(output_path),
+        "thumbnail": str(thumbnail_path) if thumbnail_path.exists() else None,
+        "thumbnail_warning": thumbnail_result.get("warning"),
+        "audio_used": voiceover_path.exists(),
+        "preview": preview,
+        "ai_scene_videos_used": True,
+        "scene_video_count": len(selected_videos),
+        "warning": None if voiceover_path.exists() else "Rendered silent video: voiceover.mp3 not found.",
     }
 
 
@@ -371,6 +461,22 @@ def _video_clip_paths(video_dir: Path) -> list[Path]:
         if path.exists():
             clips.append(path)
     return clips[:8]
+
+
+def _ai_scene_video_paths(video_dir: Path) -> list[Path]:
+    if not ai_scene_videos_available(video_dir):
+        return []
+    result = load_ai_video_result(video_dir)
+    videos = []
+    for scene in result.get("scenes", []):
+        if not scene.get("file"):
+            continue
+        path = video_dir / scene["file"]
+        if path.exists():
+            videos.append(path)
+    if not videos:
+        videos = sorted((video_dir / "scene-videos").glob("scene-*.mp4"))
+    return videos[:8]
 
 
 def _scene_images(video_dir: Path) -> list[Path]:

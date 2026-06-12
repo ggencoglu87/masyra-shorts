@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .ai_video import generate_ai_videos_for_dirs
 from .learning import ensure_learning_db, record_generated_package
 from .planner import build_daily_network_plan, write_video_packages
 from .quality import score_video_dirs
@@ -31,6 +32,7 @@ def run_daily(
     tts_provider: str = "elevenlabs",
     image_provider: str = "auto",
     video_provider: str = "auto",
+    ai_video_provider: str = "off",
     quick_preview: bool = False,
     preview_only: bool = False,
 ) -> dict:
@@ -57,8 +59,12 @@ def run_daily(
     visuals_result = None
     clips_result = None
     if render:
-        clips_result = generate_video_clips_for_dirs(package_dirs, provider_name=video_provider)
         visuals_result = generate_visuals_for_dirs(package_dirs, provider_name=image_provider)
+        ai_video_result = generate_ai_videos_for_dirs(package_dirs, provider_name=ai_video_provider)
+        clips_result = None
+        visuals_ready_count = visuals_result.get("packages_with_visuals", 0) if visuals_result else 0
+        if not ai_video_result.get("ai_movie_ready_count") and visuals_ready_count == 0:
+            clips_result = generate_video_clips_for_dirs(package_dirs, provider_name=video_provider)
         preview_result = render_video_dirs(
             package_dirs,
             duration_seconds=PREVIEW_DURATION_SECONDS,
@@ -72,6 +78,7 @@ def run_daily(
             )
         quality_result = score_video_dirs(package_dirs)
     else:
+        ai_video_result = None
         quality_result = score_video_dirs(package_dirs)
 
     upload_result = {
@@ -91,6 +98,7 @@ def run_daily(
         "learning_db": str(learning_db),
         "tts": tts_result,
         "visuals": visuals_result,
+        "ai_video": ai_video_result,
         "video_clips": clips_result,
         "quality": quality_result,
         "render_requested": render,

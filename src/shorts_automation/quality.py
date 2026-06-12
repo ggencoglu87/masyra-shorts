@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .ai_video import load_ai_video_result
 from .stock_videos import video_clips_available
 from .visuals import load_visual_result, visuals_available
 
@@ -22,6 +23,14 @@ def score_video_package(video_dir: Path) -> dict:
     has_clips = video_clips_available(video_dir)
     has_visuals = visuals_available(video_dir)
     visual_result = load_visual_result(video_dir)
+    ai_video_result = load_ai_video_result(video_dir)
+    ai_movie_ready = bool(
+        ai_video_result.get("generated_count", 0) >= 4
+        and ai_video_result.get("character_consistency_score", 0) >= 75
+        and ai_video_result.get("visual_quality_score", 0) >= 75
+        and ai_video_result.get("motion_quality_score", 0) >= 70
+        and has_final
+    )
 
     hook_score = float(scores.get("hook_score") or _hook_score(script))
     curiosity_score = float(scores.get("curiosity_score", hook_score))
@@ -34,7 +43,7 @@ def score_video_package(video_dir: Path) -> dict:
     retention_score = min(100, round((completion_probability * 0.45) + (visual_score * 0.25) + (audio_score * 0.2) + (10 if has_preview else 0), 2))
     viral_score = float(scores.get("viral_score") or scores.get("viral_potential_score", 0))
     publish_score = round((retention_score * 0.32) + (viral_score * 0.28) + (hook_score * 0.18) + (visual_score * 0.14) + (audio_score * 0.08), 2)
-    publish_ready = publish_score >= PUBLISH_THRESHOLD and has_final and has_audio and (has_clips or visual_result.get("real_visuals_ready"))
+    publish_ready = publish_score >= PUBLISH_THRESHOLD and has_final and has_audio and ai_movie_ready
 
     result = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -51,10 +60,14 @@ def score_video_package(video_dir: Path) -> dict:
         "audio_score": audio_score,
         "publish_score": publish_score,
         "publish_ready": publish_ready,
+        "ai_movie_ready": ai_movie_ready,
+        "character_consistency_score": ai_video_result.get("character_consistency_score", 0),
+        "motion_quality_score": ai_video_result.get("motion_quality_score", 0),
         "requirements": {
             "final_mp4": has_final,
             "preview_mp4": has_preview,
             "voiceover_mp3": has_audio,
+            "ai_scene_videos": ai_movie_ready,
             "real_video_clips": has_clips,
             "real_ai_visuals": bool(visual_result.get("real_visuals_ready")),
         },

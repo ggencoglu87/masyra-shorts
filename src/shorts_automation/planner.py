@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .character_bible import build_character_bible, character_prompt_text
 from .scoring import score_trend
 
 
@@ -78,10 +79,11 @@ def make_content_item(trend: dict, rank: int, channel_name: str) -> dict:
     topic = normalize_topic(trend["title"])
     category = normalize_viral_category(trend["category"], topic)
     story = build_story(topic, category)
+    character_bible = build_character_bible(category)
     title = make_title(story["hook"], category)
     script = make_script(story, category)
     narration = make_narration(story, category)
-    storyboard = make_storyboard(story, category)
+    storyboard = make_storyboard(story, category, character_bible)
     hashtags = build_hashtags(topic, category)
 
     return {
@@ -130,6 +132,7 @@ def make_content_item(trend: dict, rank: int, channel_name: str) -> dict:
         "script": script,
         "narration": narration,
         "storyboard": storyboard,
+        "character_bible": character_bible,
         "voice_profile": VOICE_PROFILES[category],
         "channel_target": CHANNEL_BY_CATEGORY[category],
         "hashtags": hashtags,
@@ -138,7 +141,7 @@ def make_content_item(trend: dict, rank: int, channel_name: str) -> dict:
             "duration_target_seconds": 26,
             "caption_style": "TikTok word-by-word large burned captions",
             "visual_style": visual_style_for_category(category),
-            "asset_policy": "Use licensed stock video first, then generated visuals, public-domain material, or original graphics only.",
+            "asset_policy": "Use AI-generated character images and AI scene videos first. Stock footage is fallback only.",
         },
         "copyright_safe": True,
     }
@@ -160,6 +163,8 @@ def write_video_packages(plan: dict, output_root: Path) -> list[Path]:
             "subtitles.srt": make_subtitles(item["narration"]),
             "captions.json": json.dumps(make_word_captions(item["narration"]), ensure_ascii=False, indent=2),
             "storyboard.json": json.dumps(item["storyboard"], ensure_ascii=False, indent=2),
+            "character_bible.json": json.dumps(item["character_bible"], ensure_ascii=False, indent=2),
+            "voice_profile.json": json.dumps(item["voice_profile"], ensure_ascii=False, indent=2),
             "asset-prompts.json": json.dumps(make_asset_prompts(item), ensure_ascii=False, indent=2),
             "copyright-checklist.json": json.dumps(make_copyright_checklist(item), ensure_ascii=False, indent=2),
             "upload-metadata.json": json.dumps(
@@ -188,14 +193,18 @@ def make_asset_prompts(item: dict) -> dict:
     category = item["trend"]["category"]
     style = item["production"]["visual_style"]
     storyboard = item.get("storyboard", [])
+    character_bible = item.get("character_bible", {})
     return {
-        "policy": "Generate or source original/licensed assets only. Match concrete story moments, not abstract trend graphics.",
+        "policy": "Primary visual path is AI-generated cinematic character scenes. Stock footage is fallback only.",
+        "style": character_bible.get("style", ""),
+        "characters": character_bible.get("characters", []),
         "scenes": [
             {
                 "scene": scene["scene"],
                 "time": scene["time"],
-                "type": "stock_video_or_generated_image",
-                "prompt": f"{scene['visual_prompt']}, vertical 9:16, emotional reaction, {style}. No logos, no copyrighted characters, no dashboard screenshots.",
+                "type": "ai_character_scene_image",
+                "prompt": scene["image_prompt"],
+                "negative_prompt": scene["negative_prompt"],
                 "search_queries": scene["search_queries"],
             }
             for scene in storyboard
@@ -210,7 +219,8 @@ def make_copyright_checklist(item: dict) -> dict:
             "No copied source trend footage.",
             "No copyrighted movie, TV, sports broadcast, music video, or gameplay clips unless explicitly licensed.",
             "No celebrity likeness asset unless it is licensed, public-domain, or used as lawful editorial commentary with proper context.",
-            "All stock footage/images have a license recorded outside the package.",
+            "AI character images and videos are original generations.",
+            "Any stock footage/images used as fallback have a license recorded outside the package.",
             "Generated assets do not imitate a living artist, brand logo, or protected character.",
             "Voiceover is original and does not clone a real person's voice without permission.",
             "Music/sound effects, if added later, are licensed or generated with commercial rights.",
@@ -276,7 +286,7 @@ def make_render_brief(item: dict) -> str:
             f"Voice style: {item['voice_profile']['style']}",
             f"Visual style: {item['production']['visual_style']}",
             "Footage rule: no copied trend footage and no copyrighted clips.",
-            "Prioritize licensed stock video clips with motion, emotion, and action. Use generated imagery only when clips are missing.",
+            "Renderer priority: AI scene videos, AI character images, stock fallback, placeholder test fallback.",
         ]
     )
 
@@ -356,25 +366,43 @@ def build_story(topic: str, category: str) -> dict:
     }
 
 
-def make_storyboard(story: dict, category: str) -> list[dict]:
+def make_storyboard(story: dict, category: str, character_bible: dict) -> list[dict]:
     labels = [
-        ("Hook", "0-3s", story["hook"]),
-        ("Conflict", "3-10s", story["curiosity"]),
-        ("Escalation", "10-20s", story["escalation"]),
-        ("Twist", "20-26s", story["twist"]),
-        ("Payoff", "26-30s", story["payoff"]),
+        ("Hook", "0-3s", 3, story["hook"], "slow push-in, cinematic close-up", "shock and curiosity"),
+        ("Conflict", "3-8s", 5, story["curiosity"], "side tracking shot, expressive reaction", "accusation and tension"),
+        ("Escalation", "8-16s", 8, story["escalation"], "handheld animated camera, quick reveal", "panic and surprise"),
+        ("Twist", "16-24s", 8, story["twist"], "dramatic low angle, fast character motion", "comic reversal"),
+        ("Payoff", "24-30s", 6, story["payoff"], "wide shot into punchline close-up", "funny payoff"),
     ]
-    return [
-        {
-            "scene": index,
-            "beat": beat,
-            "time": time_range,
-            "caption": text,
-            "visual_prompt": visual_prompt_for_scene(category, text),
-            "search_queries": scene_search_queries(category, text),
-        }
-        for index, (beat, time_range, text) in enumerate(labels, start=1)
-    ]
+    character_ids = [character["id"] for character in character_bible.get("characters", [])]
+    character_text = character_prompt_text(character_bible)
+    scenes = []
+    for index, (beat, time_range, duration, text, camera, emotion) in enumerate(labels, start=1):
+        visual_action = visual_prompt_for_scene(category, text)
+        prompt_base = (
+            f"{visual_action}. Characters: {character_text}. "
+            f"Style: {character_bible.get('style', '')}. Same character design, same clothing, same proportions, cinematic 9:16."
+        )
+        scenes.append(
+            {
+                "scene": index,
+                "beat": beat,
+                "time": time_range,
+                "duration": duration,
+                "narration": text,
+                "caption": text,
+                "visual_action": visual_action,
+                "camera": camera,
+                "emotion": emotion,
+                "characters": character_ids,
+                "visual_prompt": visual_action,
+                "image_prompt": prompt_base,
+                "video_prompt": f"{prompt_base} Smooth animated motion, expressive faces, cinematic lighting, no text.",
+                "negative_prompt": "low quality, blurry, inconsistent character, extra limbs, deformed face, text, watermark, logo, different outfit, different species",
+                "search_queries": scene_search_queries(category, text),
+            }
+        )
+    return scenes
 
 
 def visual_prompt_for_scene(category: str, text: str) -> str:
