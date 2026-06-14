@@ -427,7 +427,7 @@ class LocalLTXFallbackProvider(AIVideoProvider):
             "-loop",
             "1",
             "-i",
-            str(image_path),
+            str(scene_image),
             "-t",
             str(duration),
             "-vf",

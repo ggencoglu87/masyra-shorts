@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -226,6 +227,50 @@ class AIMovieEngineV4Tests(unittest.TestCase):
 
         self.assertIn("replicate", providers)
         self.assertLess(providers.index("replicate"), providers.index("ltx"))
+
+    def test_missing_replicate_configuration_is_recorded_without_stopping_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            result = generate_ai_videos_for_package(video_dir, provider_name="replicate", force=True)
+
+            status = json.loads((video_dir / "providers-status.json").read_text(encoding="utf-8"))
+
+        self.assertFalse(result["ai_movie_ready"])
+        self.assertEqual(status["providers"]["replicate"]["configured"], False)
+        self.assertEqual(status["providers"]["replicate"]["available"], False)
+        self.assertGreater(status["providers"]["replicate"]["failure_count"], 0)
+
+    def test_fallback_from_missing_replicate_to_ltx_does_not_raise_name_error(self) -> None:
+        self._assert_local_motion_fallback("ltx")
+
+    def test_fallback_from_missing_replicate_to_scene_image_motion_does_not_raise_name_error(self) -> None:
+        self._assert_local_motion_fallback("scene_image_motion")
+
+    def _assert_local_motion_fallback(self, fallback_provider: str) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            image_dir = video_dir / "scene-images"
+            image_dir.mkdir()
+            for index in range(1, 6):
+                (image_dir / f"scene-{index:02d}.png").write_bytes(b"fake-png")
+
+            def fake_run(command, capture_output=True, text=True, timeout=90):
+                Path(command[-1]).write_bytes(b"mp4")
+                return SimpleNamespace(returncode=0, stderr="")
+
+            with patch.dict("os.environ", {"AI_VIDEO_PROVIDER_PRIORITY": f"replicate,{fallback_provider}"}, clear=True):
+                with patch("shutil.which", return_value="ffmpeg"):
+                    with patch("subprocess.run", side_effect=fake_run):
+                        result = generate_ai_videos_for_package(video_dir, provider_name="auto", force=True)
+
+            status = json.loads((video_dir / "providers-status.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result["generated_count"], 5)
+        self.assertTrue(result["ai_movie_ready"])
+        self.assertEqual(result["scenes"][0]["provider"], fallback_provider)
+        self.assertEqual(status["providers"]["replicate"]["configured"], False)
+        self.assertEqual(status["providers"][fallback_provider]["success_count"], 5)
+        self.assertNotIn("image_path", json.dumps(result))
 
     def test_v5_auto_provider_chain_falls_back_and_writes_provider_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
