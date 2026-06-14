@@ -98,14 +98,14 @@ V5 provider mimarisi tek bir provider'a bagli degildir. Engine her scene icin en
 Varsayilan siralama:
 
 ```text
-veo3 -> veo3fast -> runway -> kling -> pixverse -> hailuo -> ltx -> scene_image_motion -> stock fallback
+veo3 -> veo3fast -> runway -> kling -> pixverse -> hailuo -> replicate -> ltx -> scene_image_motion -> stock fallback
 ```
 
 Ortam ayarlari:
 
 ```powershell
 setx AI_VIDEO_PROVIDER_MODE auto
-setx AI_VIDEO_PROVIDER_PRIORITY "veo3,veo3fast,runway,kling,pixverse,hailuo,ltx,scene_image_motion"
+setx AI_VIDEO_PROVIDER_PRIORITY "veo3,veo3fast,runway,kling,pixverse,hailuo,replicate,ltx,scene_image_motion"
 setx GOOGLE_AI_API_KEY "your_google_key"
 setx VEO_MODEL "veo-3"
 setx VEO_FAST_MODEL "veo-3-fast"

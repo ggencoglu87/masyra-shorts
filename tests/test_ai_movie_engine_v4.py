@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from shorts_automation.ai_video import generate_ai_videos_for_package  # noqa: E402
+from shorts_automation.ai_video import generate_ai_videos_for_package, select_ai_video_providers  # noqa: E402
 from shorts_automation.dashboard import build_package_rows  # noqa: E402
 from shorts_automation.planner import build_daily_network_plan, write_video_packages  # noqa: E402
 from shorts_automation.quality import score_video_package  # noqa: E402
@@ -219,6 +219,13 @@ class AIMovieEngineV4Tests(unittest.TestCase):
 
         payload = json.loads(requests[0].data.decode("utf-8"))
         self.assertNotIn("image", payload["input"])
+
+    def test_v5_default_auto_provider_chain_includes_replicate_before_local_fallbacks(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            providers = [provider.name for provider in select_ai_video_providers("auto")]
+
+        self.assertIn("replicate", providers)
+        self.assertLess(providers.index("replicate"), providers.index("ltx"))
 
     def test_v5_auto_provider_chain_falls_back_and_writes_provider_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

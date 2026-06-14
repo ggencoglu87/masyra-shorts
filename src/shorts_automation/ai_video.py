@@ -20,7 +20,7 @@ QUALITY_THRESHOLDS = {
     "character_consistency": 75,
     "motion_quality": 70,
 }
-DEFAULT_PROVIDER_PRIORITY = "veo3,veo3fast,runway,kling,pixverse,hailuo,ltx,scene_image_motion"
+DEFAULT_PROVIDER_PRIORITY = "veo3,veo3fast,runway,kling,pixverse,hailuo,replicate,ltx,scene_image_motion"
 
 
 class AIVideoProvider:
