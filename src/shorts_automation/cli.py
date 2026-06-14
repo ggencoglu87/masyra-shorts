@@ -34,12 +34,13 @@ def main(argv: list[str] | None = None) -> int:
     daily_parser.add_argument("--render", action="store_true", default=True, help="Render final.mp4 files with FFmpeg when available. Enabled by default in v3.")
     daily_parser.add_argument("--no-render", action="store_false", dest="render", help="Prepare story packages and voiceover only; skip clips, visuals, and video rendering.")
     daily_parser.add_argument("--upload", action="store_true", help="Reserved for explicit YouTube upload. Disabled without OAuth integration.")
-    tts_choices = ["mock", "elevenlabs", "piper", "off"]
-    daily_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
+    tts_choices = ["auto", "google_ai_studio", "google", "mock", "elevenlabs", "piper", "off"]
+    daily_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "auto"), choices=tts_choices)
     visual_choices = ["auto", "openai", "placeholder"]
     daily_parser.add_argument("--image-provider", default=default_visual_provider(), choices=visual_choices)
     daily_parser.add_argument("--video-provider", default=default_video_provider(), choices=["auto", "pexels", "pixabay", "off"])
-    daily_parser.add_argument("--ai-video-provider", default=default_ai_video_provider(), choices=["off", "auto", "veo", "kling", "runway", "pixverse", "hailuo", "ltx"])
+    ai_video_choices = ["off", "auto", "veo3", "veo3fast", "veo", "runway", "kling", "pixverse", "hailuo", "replicate", "ltx", "scene_image_motion"]
+    daily_parser.add_argument("--ai-video-provider", default=default_ai_video_provider(), choices=ai_video_choices)
     daily_parser.add_argument("--quick-preview", action="store_true", help="Render 15 second low-resolution preview.mp4 files.")
     daily_parser.add_argument("--preview-only", action="store_true", help="Render preview.mp4 and thumbnail only; skip final.mp4.")
 
@@ -52,12 +53,12 @@ def main(argv: list[str] | None = None) -> int:
     render_parser.add_argument("--with-clips", action="store_true", help="Download stock video clips before rendering when available.")
     render_parser.add_argument("--with-ai-video", action="store_true", help="Generate AI scene videos before rendering when configured.")
     render_parser.add_argument("--video-provider", default=default_video_provider(), choices=["auto", "pexels", "pixabay", "off"])
-    render_parser.add_argument("--ai-video-provider", default=default_ai_video_provider(), choices=["off", "auto", "veo", "kling", "runway", "pixverse", "hailuo", "ltx"])
+    render_parser.add_argument("--ai-video-provider", default=default_ai_video_provider(), choices=ai_video_choices)
     render_parser.add_argument("--image-provider", default=default_visual_provider(), choices=visual_choices)
     render_parser.add_argument("--force-visuals", action="store_true", help="Regenerate existing scene images before rendering.")
     render_parser.add_argument("--allow-placeholder", action="store_true", help="Allow placeholder fallback if OpenAI visual generation fails.")
     render_parser.add_argument("--debug", action="store_true", help="Write debug payloads to visual-result.json.")
-    render_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
+    render_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "auto"), choices=tts_choices)
     render_parser.add_argument("--force-tts", action="store_true", help="Regenerate voiceover.mp3 before rendering.")
 
     visuals_parser = subparsers.add_parser("generate-visuals", help="Generate scene images from asset-prompts.json.")
@@ -91,12 +92,12 @@ def main(argv: list[str] | None = None) -> int:
 
     ai_video_parser = subparsers.add_parser("generate-ai-video", help="Generate AI scene videos for one package.")
     ai_video_parser.add_argument("video_dir", help="Video package directory containing storyboard.json.")
-    ai_video_parser.add_argument("--ai-video-provider", default=default_ai_video_provider(), choices=["off", "auto", "veo", "kling", "runway", "pixverse", "hailuo", "ltx"])
+    ai_video_parser.add_argument("--ai-video-provider", default=default_ai_video_provider(), choices=ai_video_choices)
     ai_video_parser.add_argument("--force", action="store_true", help="Regenerate existing scene videos.")
 
     ai_video_all_parser = subparsers.add_parser("generate-ai-video-all", help="Generate AI scene videos for every package in a videos directory.")
     ai_video_all_parser.add_argument("videos_dir", help="Directory containing video package folders.")
-    ai_video_all_parser.add_argument("--ai-video-provider", default=default_ai_video_provider(), choices=["off", "auto", "veo", "kling", "runway", "pixverse", "hailuo", "ltx"])
+    ai_video_all_parser.add_argument("--ai-video-provider", default=default_ai_video_provider(), choices=ai_video_choices)
     ai_video_all_parser.add_argument("--force", action="store_true", help="Regenerate existing scene videos.")
 
     generate_parser = subparsers.add_parser("generate-video", help="Generate sample video packages and optionally render them.")
@@ -104,18 +105,18 @@ def main(argv: list[str] | None = None) -> int:
     generate_parser.add_argument("--output-dir", default=os.getenv("SHORTS_OUTPUT_DIR", "outputs"))
     generate_parser.add_argument("--top-n", type=int, default=1)
     generate_parser.add_argument("--render", action="store_true")
-    generate_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
+    generate_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "auto"), choices=tts_choices)
     generate_parser.add_argument("--image-provider", default=default_visual_provider(), choices=visual_choices)
     generate_parser.add_argument("--quick-preview", action="store_true")
 
     tts_parser = subparsers.add_parser("generate-tts", help="Generate voiceover.mp3 for one video package.")
     tts_parser.add_argument("video_dir", help="Directory containing voiceover.txt.")
-    tts_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
+    tts_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "auto"), choices=tts_choices)
     tts_parser.add_argument("--force", action="store_true", help="Regenerate voiceover.mp3 even when it already exists.")
 
     tts_all_parser = subparsers.add_parser("generate-tts-all", help="Generate voiceover.mp3 files for every package in a videos directory.")
     tts_all_parser.add_argument("videos_dir", help="Directory containing video package folders.")
-    tts_all_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "elevenlabs"), choices=tts_choices)
+    tts_all_parser.add_argument("--tts-provider", default=os.getenv("TTS_PROVIDER", "auto"), choices=tts_choices)
     tts_all_parser.add_argument("--force", action="store_true", help="Regenerate existing voiceover.mp3 files.")
 
     dashboard_parser = subparsers.add_parser("dashboard", help="Start the local review dashboard.")

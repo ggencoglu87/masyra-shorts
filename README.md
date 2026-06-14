@@ -77,8 +77,10 @@ Renderer onceligi:
 AI video provider ayarlari:
 
 ```powershell
-AI_VIDEO_PROVIDER=off
-AI_VIDEO_PROVIDER_PRIORITY=veo,kling,runway,pixverse,hailuo
+AI_VIDEO_PROVIDER=replicate
+AI_VIDEO_PROVIDER_PRIORITY=replicate,veo,kling,runway,pixverse,hailuo
+REPLICATE_API_TOKEN=your_replicate_api_token
+REPLICATE_VIDEO_MODEL=owner/model-or-version
 GOOGLE_AI_API_KEY=
 VEO_MODEL=veo-3-fast
 KLING_API_KEY=
@@ -88,6 +90,142 @@ HAILUO_API_KEY=
 ```
 
 AI video provider `off` ise sistem hata vermez; scene images uretilir, image-based render denenir ve `ai-video-result.json` icinde `ai_movie_ready=false` yazilir.
+
+## V5 Provider Architecture
+
+V5 provider mimarisi tek bir provider'a bagli degildir. Engine her scene icin en yuksek kalite provider'dan baslar, basarisiz olursa siradakine gecer ve renderer'a sadece `scene-videos/scene-XX.mp4` dosyalarini verir. Renderer provider detayini bilmez.
+
+Varsayilan siralama:
+
+```text
+veo3 -> veo3fast -> runway -> kling -> pixverse -> hailuo -> ltx -> scene_image_motion -> stock fallback
+```
+
+Ortam ayarlari:
+
+```powershell
+setx AI_VIDEO_PROVIDER_MODE auto
+setx AI_VIDEO_PROVIDER_PRIORITY "veo3,veo3fast,runway,kling,pixverse,hailuo,ltx,scene_image_motion"
+setx GOOGLE_AI_API_KEY "your_google_key"
+setx VEO_MODEL "veo-3"
+setx VEO_FAST_MODEL "veo-3-fast"
+setx RUNWAY_API_KEY "your_runway_key"
+setx KLING_API_KEY "your_kling_key"
+setx PIXVERSE_API_KEY "your_pixverse_key"
+setx HAILUO_API_KEY "your_hailuo_key"
+```
+
+Premium provider API endpointleri servis tarafinda degisirse kod degistirmeden env mapping kullan:
+
+```powershell
+setx VEO3_CREATE_URL "https://provider.example/create"
+setx VEO3_STATUS_URL_TEMPLATE "https://provider.example/jobs/{id}"
+setx RUNWAY_CREATE_URL "https://provider.example/create"
+setx RUNWAY_STATUS_URL_TEMPLATE "https://provider.example/jobs/{id}"
+setx KLING_CREATE_URL "https://provider.example/create"
+setx KLING_STATUS_URL_TEMPLATE "https://provider.example/jobs/{id}"
+```
+
+Ortak mapping anahtarlari:
+
+```powershell
+*_PROMPT_FIELD=prompt
+*_NEGATIVE_PROMPT_FIELD=negative_prompt
+*_IMAGE_FIELD=image
+*_DURATION_FIELD=duration
+*_ASPECT_RATIO_FIELD=aspect_ratio
+*_SEED_FIELD=seed
+*_STATUS_FIELD=status
+*_ID_FIELD=id
+*_OUTPUT_FIELD=output
+*_AUTH_HEADER=Authorization
+*_AUTH_SCHEME=Bearer
+```
+
+Kalite kapisi:
+
+- `visual_quality >= 75`
+- `character_consistency >= 75`
+- `motion_quality >= 70`
+
+Bir scene video bu esikleri gecmezse silinir ve siradaki provider denenir. `ai_movie_ready=true` sadece en az 4 kabul edilmis scene MP4 dosyasi varsa yazilir.
+
+Provider health dosyasi:
+
+```text
+providers-status.json
+```
+
+Bu dosya provider bazinda sunlari izler:
+
+- enabled
+- configured
+- available
+- last_success
+- last_failure
+- average_generation_time
+
+Dashboard, provider status, fallback chain, generation duration, quality scores, voice provider ve AI movie readiness bilgilerini gosterir.
+
+Voice provider siralamasi:
+
+```text
+Google AI Studio TTS -> ElevenLabs -> Piper -> Mock
+```
+
+```powershell
+setx TTS_PROVIDER auto
+setx GOOGLE_AI_API_KEY "your_google_key"
+setx GOOGLE_TTS_MODEL "gemini-2.5-flash-preview-tts"
+setx ELEVENLABS_API_KEY "your_elevenlabs_key"
+```
+
+Stock footage artik son care fallback'tir. AI scene videos varsa stock footage kullanilmaz.
+
+### Replicate AI Video Provider
+
+Replicate, V4 icin ilk gercek AI scene-video provider'dir. Sistem `storyboard.json` okur, her scene icin `video_prompt` ve `negative_prompt` kullanir, varsa `scene-images/scene-01.png` dosyasini image-to-video starting frame olarak gonderir, yoksa text-to-video calisir.
+
+Kurulum:
+
+```powershell
+setx AI_VIDEO_PROVIDER replicate
+setx REPLICATE_API_TOKEN "r8_your_token"
+setx REPLICATE_VIDEO_MODEL "owner/model-or-version"
+```
+
+Tek paket icin:
+
+```powershell
+py -m shorts_automation.cli generate-ai-video outputs\2026-06-12\videos\01-example --ai-video-provider replicate
+py -m shorts_automation.cli render-video outputs\2026-06-12\videos\01-example --with-ai-video --ai-video-provider replicate
+```
+
+Tum paketler icin:
+
+```powershell
+py -m shorts_automation.cli generate-ai-video-all outputs\2026-06-12\videos --ai-video-provider replicate
+py -m shorts_automation.cli daily-run --sample --render --ai-video-provider replicate
+```
+
+Cikti:
+
+- `scene-videos/scene-01.mp4`, `scene-videos/scene-02.mp4`, ...
+- `ai-video-result.json`
+- Scene bazinda Replicate prediction id, status, input payload, output URL ve provider response metadata
+
+`ai_movie_ready=true` sadece en az 4 gercek scene video dosyasi varsa yazilir. Renderer her zaman `scene-videos/` dosyalarini `scene-images/` ve stock clip fallback'ten once kullanir.
+
+Bazi Replicate modelleri farkli input field adlari kullanir. Bunlari `.env` icinden degistirebilirsin:
+
+```powershell
+REPLICATE_PROMPT_FIELD=prompt
+REPLICATE_NEGATIVE_PROMPT_FIELD=negative_prompt
+REPLICATE_IMAGE_FIELD=image
+REPLICATE_ASPECT_RATIO_FIELD=aspect_ratio
+REPLICATE_DURATION_FIELD=duration
+REPLICATE_SEED_FIELD=seed
+```
 
 ## Kaynaklar
 

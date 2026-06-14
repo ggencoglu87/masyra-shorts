@@ -8,7 +8,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from .ai_video import default_ai_video_provider, generate_ai_videos_for_package, load_ai_video_result
+from .ai_video import default_ai_video_provider, generate_ai_videos_for_package, load_ai_video_result, load_providers_status
 from .quality import load_quality_score, score_video_package
 from .renderer import DEFAULT_DURATION_SECONDS, PREVIEW_DURATION_SECONDS, render_video_package
 from .status_store import DEFAULT_STATUS, StatusStore, VALID_STATUSES
@@ -276,6 +276,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
     clip_manifest = load_clip_manifest(video_dir)
     clip_result = load_clip_result(video_dir)
     ai_video_result = load_ai_video_result(video_dir)
+    providers_status = load_providers_status(video_dir)
     visual_result = load_visual_result(video_dir)
     quality = load_quality_score(video_dir)
     status_data = store.get(video_dir)
@@ -400,6 +401,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
         </section>
         {quality_section(quality)}
         {asset_status_section(asset_status)}
+        {providers_status_section(providers_status)}
         {character_bible_section(character_bible)}
         {storyboard_section(storyboard)}
         {captions_section(captions)}
@@ -506,6 +508,8 @@ def dashboard_asset_status(video_dir: Path) -> dict:
         "ai_videos_ready": ai_videos_ready,
         "ai_movie_ready": ai_movie_ready,
         "ai_video_provider": ai_video_result.get("provider", "off"),
+        "ai_provider_fallback_chain": ai_video_result.get("provider_priority", []),
+        "ai_generation_duration": _ai_generation_duration(ai_video_result),
         "ai_scene_count": int(ai_video_result.get("scene_count", 0) or 0),
         "ai_generated_count": ai_generated_count,
         "character_consistency_score": ai_video_result.get("character_consistency_score", 0),
@@ -518,6 +522,7 @@ def dashboard_asset_status(video_dir: Path) -> dict:
         "video_publish_ready": bool(clip_result.get("publish_ready")),
         "audio_ready": audio_ready,
         "audio_provider": provider_used or "not generated",
+        "audio_generation_time": tts_result.get("generation_time"),
         "requested_audio_provider": tts_result.get("requested_provider") or tts_result.get("provider", "not generated"),
         "real_openai_visuals_ready": real_openai_visuals_ready,
         "placeholder_visuals": placeholder_visuals,
@@ -598,6 +603,8 @@ def asset_status_section(status: dict) -> str:
     return f"""
     <section class="score-strip">
       {score_box("AI Provider", status.get("ai_video_provider", ""))}
+      {score_box("Fallback Chain", ", ".join(status.get("ai_provider_fallback_chain", [])) or "missing")}
+      {score_box("Video Gen Time", status.get("ai_generation_duration", "missing"))}
       {score_box("AI Scenes", f"{status.get('ai_generated_count', 0)}/{status.get('ai_scene_count', 0)}")}
       {score_box("Character Consistency", status.get("character_consistency_score", 0))}
       {score_box("Motion Quality", status.get("motion_quality_score", 0))}
@@ -605,7 +612,44 @@ def asset_status_section(status: dict) -> str:
       {score_box("Real Clips", status.get("real_clip_count", 0))}
       {score_box("Video Provider", status.get("video_provider", ""))}
       {score_box("Audio Provider", status.get("audio_provider", ""))}
+      {score_box("Voice Gen Time", status.get("audio_generation_time", "missing"))}
       {score_box("Publish Ready", "Yes" if status.get("publish_ready") else "No")}
+    </section>
+    """
+
+
+def providers_status_section(status: dict) -> str:
+    providers = status.get("providers", {}) if isinstance(status, dict) else {}
+    if not providers:
+        return '<section class="timeline-section"><h2>Provider Status</h2><div class="missing">providers-status.json missing. Generate AI videos to populate provider health.</div></section>'
+    cards = []
+    for provider in providers.values():
+        state = "Available" if provider.get("available") else "Unavailable"
+        configured = "Configured" if provider.get("configured") else "Not configured"
+        cards.append(
+            f"""
+            <article class="scene-card">
+              <div class="scene-body">
+                <h3>{_e(provider.get("provider", ""))}</h3>
+                <div class="scene-meta">
+                  <span>{_e(state)}</span>
+                  <span>{_e(configured)}</span>
+                  <span>avg {_e(provider.get("average_generation_time", "n/a"))}</span>
+                </div>
+                <p>Last success: {_e(provider.get("last_success") or "never")}</p>
+                <p>Last failure: {_e(provider.get("last_failure") or "never")}</p>
+                <p>{_e(provider.get("last_error") or "")}</p>
+              </div>
+            </article>
+            """
+        )
+    return f"""
+    <section class="timeline-section">
+      <div class="section-title-row">
+        <h2>Provider Status</h2>
+        <span class="pill">{len(providers)} providers</span>
+      </div>
+      <div class="timeline-grid">{''.join(cards)}</div>
     </section>
     """
 
@@ -834,6 +878,18 @@ def _placeholder_warning(manifest: dict, asset_status: dict | None = None) -> st
     return ""
 
 
+def _ai_generation_duration(result: dict) -> str:
+    total = 0.0
+    for scene in result.get("scenes", []):
+        if scene.get("generation_time") and not scene.get("fallback_chain"):
+            total += float(scene.get("generation_time") or 0)
+        for attempt in scene.get("fallback_chain", []):
+            total += float(attempt.get("generation_time") or 0)
+    if not total:
+        return "missing"
+    return f"{round(total, 2)}s"
+
+
 def page(title: str, body: str) -> str:
     return f"""
     <!doctype html>
@@ -1000,7 +1056,7 @@ def _read_text(path: Path) -> str:
 
 
 def _dashboard_tts_provider() -> str:
-    return os.getenv("TTS_PROVIDER", "elevenlabs").lower()
+    return os.getenv("TTS_PROVIDER", "auto").lower()
 
 
 def slug(value: str) -> str:

@@ -6,6 +6,8 @@ import hashlib
 import shutil
 import subprocess
 import tempfile
+import time
+import base64
 import urllib.error
 import urllib.request
 import wave
@@ -16,6 +18,8 @@ from pathlib import Path
 DEFAULT_ELEVENLABS_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"
 DEFAULT_ELEVENLABS_MODEL_ID = "eleven_multilingual_v2"
 DEFAULT_PIPER_MODEL_PATH = "/opt/masyra-shorts/models/piper/en_US-lessac-medium.onnx"
+DEFAULT_GOOGLE_TTS_MODEL = "gemini-2.5-flash-preview-tts"
+DEFAULT_GOOGLE_TTS_VOICE = "Puck"
 
 
 class TTSProvider:
@@ -120,6 +124,57 @@ class ElevenLabsTTSProvider(TTSProvider):
         }
 
 
+class GoogleAITTSProvider(TTSProvider):
+    name = "google_ai_studio"
+
+    def __init__(self, api_key: str, model_id: str | None = None, voice_name: str | None = None) -> None:
+        self.api_key = api_key
+        self.model_id = model_id or os.getenv("GOOGLE_TTS_MODEL", DEFAULT_GOOGLE_TTS_MODEL)
+        self.voice_name = voice_name or os.getenv("GOOGLE_TTS_VOICE", DEFAULT_GOOGLE_TTS_VOICE)
+
+    def synthesize(self, text: str, output_path: Path) -> dict:
+        payload = json.dumps(
+            {
+                "contents": [{"parts": [{"text": text}]}],
+                "generationConfig": {
+                    "responseModalities": ["AUDIO"],
+                    "speechConfig": {
+                        "voiceConfig": {
+                            "prebuiltVoiceConfig": {
+                                "voiceName": self.voice_name,
+                            }
+                        }
+                    },
+                },
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_id}:generateContent?key={self.api_key}",
+            data=payload,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace")[:1000]
+            raise RuntimeError(f"Google AI Studio TTS error {exc.code}: {details}") from exc
+
+        audio = _extract_inline_audio(body)
+        if not audio:
+            raise RuntimeError("Google AI Studio TTS returned no inline audio data.")
+        output_path.write_bytes(audio)
+        return {
+            "provider": self.name,
+            "created": True,
+            "output": str(output_path),
+            "warning": None,
+            "model_id": self.model_id,
+            "voice_name": self.voice_name,
+        }
+
+
 class PiperTTSProvider(TTSProvider):
     name = "piper"
 
@@ -215,6 +270,11 @@ def get_tts_provider(name: str) -> TTSProvider | None:
         return None
     if normalized == "mock":
         return MockTTSProvider()
+    if normalized in {"google", "google_ai", "google_ai_studio"}:
+        api_key = os.getenv("GOOGLE_AI_API_KEY")
+        if not api_key:
+            return UnavailableTTSProvider("google_ai_studio", "GOOGLE_AI_API_KEY is missing. Google AI Studio TTS was not called.")
+        return GoogleAITTSProvider(api_key=api_key)
     if normalized == "elevenlabs":
         api_key = os.getenv("ELEVENLABS_API_KEY")
         if not api_key:
@@ -226,9 +286,11 @@ def get_tts_provider(name: str) -> TTSProvider | None:
 
 
 def get_tts_fallback_chain(name: str) -> list[TTSProvider]:
-    normalized = (name or "elevenlabs").lower()
+    normalized = (name or "google_ai_studio").lower()
     if normalized in {"off", "none"}:
         return []
+    if normalized in {"auto", "google", "google_ai", "google_ai_studio"}:
+        return [get_tts_provider("google_ai_studio"), get_tts_provider("elevenlabs"), PiperTTSProvider(), MockTTSProvider()]  # type: ignore[list-item]
     if normalized == "elevenlabs":
         return [get_tts_provider("elevenlabs"), PiperTTSProvider(), MockTTSProvider()]  # type: ignore[list-item]
     if normalized == "piper":
@@ -259,6 +321,7 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
         return _write_tts_result(video_dir, result_path, result, force=force)
 
     text = voiceover_text.read_text(encoding="utf-8").strip()
+    voice_profile = _read_json(video_dir / "voice_profile.json")
     source_text_hash = _text_hash(text)
     previous = _read_json(result_path)
     previous_hash = previous.get("source_text_hash")
@@ -323,20 +386,25 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
         "warning": "No TTS provider created audio.",
     }
     for provider in providers:
+        started = time.monotonic()
         try:
             attempt = provider.synthesize(text=text, output_path=output_path)
         except Exception as exc:  # Network/API failures should not break package generation.
+            elapsed = round(time.monotonic() - started, 3)
             warning = f"TTS failed for {video_dir.name} with {provider.name}: {exc}"
-            attempts.append({"provider": provider.name, "created": False, "warning": warning})
+            attempts.append({"provider": provider.name, "created": False, "warning": warning, "generation_time": elapsed})
             if provider.name == "elevenlabs" and not _should_fallback_from_elevenlabs(exc):
                 continue
             continue
+        elapsed = round(time.monotonic() - started, 3)
+        attempt["generation_time"] = elapsed
 
         attempts.append(
             {
                 "provider": provider.name,
                 "created": bool(attempt.get("created")),
                 "warning": attempt.get("warning"),
+                "generation_time": elapsed,
             }
         )
         if attempt.get("created") and output_path.exists():
@@ -345,6 +413,8 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
                 "requested_provider": provider_name,
                 "provider": provider.name,
                 "provider_used": provider.name,
+                "generation_time": elapsed,
+                "voice_profile": voice_profile,
                 "fallback_attempts": attempts,
             }
             break
@@ -465,6 +535,17 @@ def _read_json(path: Path) -> dict:
 def _should_fallback_from_elevenlabs(exc: BaseException) -> bool:
     text = str(exc).lower()
     return any(marker in text for marker in ["quota_exceeded", "billing", "401", "429"])
+
+
+def _extract_inline_audio(response: dict) -> bytes | None:
+    candidates = response.get("candidates", [])
+    for candidate in candidates:
+        parts = candidate.get("content", {}).get("parts", [])
+        for part in parts:
+            inline = part.get("inlineData") or part.get("inline_data")
+            if isinstance(inline, dict) and inline.get("data"):
+                return base64.b64decode(inline["data"])
+    return None
 
 
 def _write_mock_audio(output_path: Path, text: str) -> None:
