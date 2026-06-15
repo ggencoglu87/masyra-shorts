@@ -45,6 +45,7 @@ class AIVideoProvider:
         scene_image: Path | None,
         output_path: Path,
         seed: int,
+        raw_scene: dict | None = None,
     ) -> dict:
         scene = {
             "scene": scene_id,
@@ -65,6 +66,7 @@ class AIVideoProvider:
             scene_image=image_path,
             output_path=output_path,
             seed=seed,
+            raw_scene=scene,
         )
 
 
@@ -88,6 +90,7 @@ class OffAIVideoProvider(AIVideoProvider):
         scene_image: Path | None,
         output_path: Path,
         seed: int,
+        raw_scene: dict | None = None,
     ) -> dict:
         return {"provider": self.name, "created": False, "warning": "AI_VIDEO_PROVIDER is off."}
 
@@ -128,6 +131,7 @@ class ConfiguredRemoteAIVideoProvider(AIVideoProvider):
         scene_image: Path | None,
         output_path: Path,
         seed: int,
+        raw_scene: dict | None = None,
     ) -> dict:
         if self.available():
             return self._generate_with_generic_http(
@@ -164,6 +168,7 @@ class ConfiguredRemoteAIVideoProvider(AIVideoProvider):
         scene_image: Path | None,
         output_path: Path,
         seed: int,
+        raw_scene: dict | None = None,
     ) -> dict:
         input_payload = {
             os.getenv(f"{self.env_prefix}_PROMPT_FIELD", "prompt"): video_prompt,
@@ -289,6 +294,7 @@ class ReplicateAIVideoProvider(AIVideoProvider):
         scene_image: Path | None,
         output_path: Path,
         seed: int,
+        raw_scene: dict | None = None,
     ) -> dict:
         if not self.available():
             return {
@@ -297,7 +303,7 @@ class ReplicateAIVideoProvider(AIVideoProvider):
                 "warning": "REPLICATE_API_TOKEN and REPLICATE_VIDEO_MODEL are required for AI video generation.",
             }
 
-        prompt = _safe_prompt(video_prompt, scene_id=scene_id)
+        prompt = _scene_prompt(raw_scene or {"video_prompt": video_prompt}, scene_id)
         input_payload = self._build_input(prompt, negative_prompt, duration, scene_image, seed)
         request_payload = {"version": self.model, "input": input_payload}
         result: dict[str, Any] = {
@@ -307,12 +313,17 @@ class ReplicateAIVideoProvider(AIVideoProvider):
             "status": None,
             "model": self.model,
             "prompt": prompt,
+            "final_resolved_prompt": prompt,
+            "video_prompt": str(raw_scene.get("video_prompt", "") if raw_scene is not None else video_prompt or ""),
+            "image_prompt": str(raw_scene.get("image_prompt", "") if raw_scene is not None else ""),
+            "narration": str(raw_scene.get("narration", "") if raw_scene is not None else ""),
             "negative_prompt": negative_prompt,
             "image_reference": str(scene_image) if scene_image else None,
             "duration": duration,
             "aspect_ratio": aspect_ratio,
             "seed": seed,
             "input": input_payload,
+            "request_payload": request_payload,
         }
 
         try:
@@ -427,6 +438,7 @@ class LocalLTXFallbackProvider(AIVideoProvider):
         scene_image: Path | None,
         output_path: Path,
         seed: int,
+        raw_scene: dict | None = None,
     ) -> dict:
         if not scene_image or not scene_image.exists():
             return {
@@ -564,6 +576,7 @@ def generate_ai_videos_for_package(video_dir: Path, provider_name: str = "off", 
                         scene_image=image_path if image_path.exists() else None,
                         output_path=output_path,
                         seed=index,
+                        raw_scene=scene,
                     )
                 except Exception as exc:
                     generated = {"provider": provider.name, "created": False, "warning": str(exc)}

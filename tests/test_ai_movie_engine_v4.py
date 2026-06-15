@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import io
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -271,6 +273,8 @@ class AIMovieEngineV4Tests(unittest.TestCase):
             payload = json.loads(requests[0].data.decode("utf-8"))
 
         self.assertEqual(payload["input"]["prompt"], "A bright animated cat jumps over a table.")
+        self.assertEqual(result["scenes"][0]["request_payload"]["input"]["prompt"], "A bright animated cat jumps over a table.")
+        self.assertEqual(result["scenes"][0]["final_resolved_prompt"], "A bright animated cat jumps over a table.")
         self.assertEqual(result["scenes"][0]["prompt"], "A bright animated cat jumps over a table.")
 
     def test_replicate_payload_falls_back_to_narration_when_prompts_are_empty(self) -> None:
@@ -303,7 +307,49 @@ class AIMovieEngineV4Tests(unittest.TestCase):
             payload = json.loads(requests[0].data.decode("utf-8"))
 
         self.assertEqual(payload["input"]["prompt"], "The chicken slowly realizes the cat saw everything.")
+        self.assertEqual(result["scenes"][0]["video_prompt"], "")
+        self.assertEqual(result["scenes"][0]["image_prompt"], "")
+        self.assertEqual(result["scenes"][0]["narration"], "The chicken slowly realizes the cat saw everything.")
+        self.assertEqual(result["scenes"][0]["request_payload"]["input"]["prompt"], "The chicken slowly realizes the cat saw everything.")
+        self.assertEqual(result["scenes"][0]["final_resolved_prompt"], "The chicken slowly realizes the cat saw everything.")
         self.assertEqual(result["scenes"][0]["prompt"], "The chicken slowly realizes the cat saw everything.")
+
+    def test_replicate_http_error_records_exact_non_empty_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            scene = {
+                "scene": 1,
+                "video_prompt": "",
+                "image_prompt": "A worried orange cat stares at a broken fish bowl.",
+                "narration": "The cat knew the camera was recording.",
+                "negative_prompt": "text, watermark",
+                "duration": 4,
+            }
+            (video_dir / "storyboard.json").write_text(json.dumps([scene], ensure_ascii=False), encoding="utf-8")
+
+            def fake_urlopen(request, timeout=120):
+                raise urllib.error.HTTPError(
+                    request.full_url,
+                    422,
+                    "Unprocessable Entity",
+                    {},
+                    io.BytesIO(b'{"detail":"prompt is required"}'),
+                )
+
+            with patch.dict(
+                "os.environ",
+                {"REPLICATE_API_TOKEN": "r8_test", "REPLICATE_VIDEO_MODEL": "minimax/video-01", "REPLICATE_POLL_INTERVAL_SECONDS": "0"},
+            ):
+                with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                    result = generate_ai_videos_for_package(video_dir, provider_name="replicate", force=True)
+
+            saved = json.loads((video_dir / "ai-video-result.json").read_text(encoding="utf-8"))
+
+        attempt = saved["scenes"][0]["fallback_chain"][0]
+        self.assertFalse(result["ai_movie_ready"])
+        self.assertEqual(attempt["final_resolved_prompt"], "A worried orange cat stares at a broken fish bowl.")
+        self.assertEqual(attempt["request_payload"]["input"]["prompt"], "A worried orange cat stares at a broken fish bowl.")
+        self.assertIn("HTTP 422", attempt["warning"])
 
     def test_v5_default_auto_provider_chain_includes_replicate_before_local_fallbacks(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
