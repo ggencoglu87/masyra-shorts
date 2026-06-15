@@ -9,13 +9,18 @@ STYLE_REFERENCE = "cinematic 3D animated movie, expressive characters, high deta
 
 
 def build_character_bible(category: str) -> dict:
+    universe = universe_for_category(category)
     characters = _characters_for_category(category)
     for character in characters:
         visual = f"{character['appearance']}; personality: {character['personality']}; role: {character['role']}"
         character["visual_description"] = visual
         character["style_reference"] = STYLE_REFERENCE
         character["appearance_hash"] = hashlib.sha256(visual.encode("utf-8")).hexdigest()[:16]
+        character.setdefault("voice", voice_for_category(category))
+        character.setdefault("memory", [])
+        character["universe"] = universe["id"]
     return {
+        "universe": universe,
         "style": STYLE_REFERENCE,
         "consistency_rules": [
             "Use the exact same character ids and appearance in every scene.",
@@ -49,6 +54,34 @@ def character_prompt_text(bible: dict, character_ids: list[str] | None = None) -
         if not allowed or character.get("id") in allowed:
             selected.append(f"{character['id']}: {character['visual_description']}")
     return " | ".join(selected)
+
+
+def universe_for_category(category: str) -> dict:
+    universe_id = _slug(category or "Custom")
+    return {
+        "id": universe_id,
+        "name": category or "Custom",
+        "description": f"Recurring AI animated short-film universe for {category or 'custom'} stories.",
+        "visual_style": STYLE_REFERENCE,
+    }
+
+
+def voice_for_category(category: str) -> str:
+    voices = {
+        "Funny Animals": "energetic animated comedy narrator",
+        "Funny Kids": "warm playful narrator",
+        "Funny Fails": "fast chaotic comedy narrator",
+        "Horror Stories": "slow suspense narrator",
+        "Reddit Stories": "confessional story narrator",
+        "Sports Drama": "excited commentator",
+        "Relationship Stories": "dramatic storyteller",
+        "Minecraft Stories": "fast gamer narrator",
+        "Motivational Stories": "inspiring narrator",
+        "Celebrity Drama": "entertainment host narrator",
+        "Survival Stories": "urgent documentary narrator",
+        "Crazy Facts": "excited fact narrator",
+    }
+    return voices.get(category, "cinematic story narrator")
 
 
 def _characters_for_category(category: str) -> list[dict]:
@@ -127,3 +160,7 @@ def _characters_for_category(category: str) -> list[dict]:
             "role": "supporting character",
         },
     ]
+
+
+def _slug(value: str) -> str:
+    return "".join(character.lower() if character.isalnum() else "_" for character in value).strip("_") or "custom"

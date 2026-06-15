@@ -28,6 +28,23 @@ def ensure_learning_db(output_dir: Path) -> Path:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS episode_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_dir TEXT UNIQUE NOT NULL,
+                universe TEXT NOT NULL,
+                title TEXT,
+                characters TEXT,
+                relationships TEXT,
+                story_arcs TEXT,
+                recurring_jokes TEXT,
+                character_growth TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
     return path
 
 
@@ -37,6 +54,10 @@ def record_generated_package(video_dir: Path, plan: dict, learning_db: Path) -> 
     channel_target = plan.get("channel_target", "")
     hook = plan.get("content_strategy", {}).get("hook", "")
     format_signature = f"{category}:{plan.get('voice_profile', {}).get('style', '')}:{hook[:40]}"
+    universe = plan.get("universe", {}).get("id") or category.lower().replace(" ", "_")
+    characters = ",".join(character.get("id", "") for character in plan.get("character_bible", {}).get("characters", []) if character.get("id"))
+    story_arc = plan.get("content_strategy", {}).get("story_structure", "")
+    recurring_jokes = "the guilty pet tries to act normal" if category == "Funny Animals" else ""
     with sqlite3.connect(learning_db) as connection:
         connection.execute(
             """
@@ -51,4 +72,31 @@ def record_generated_package(video_dir: Path, plan: dict, learning_db: Path) -> 
                 updated_at=excluded.updated_at
             """,
             (str(video_dir), category, channel_target, hook, format_signature, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO episode_memory (
+                video_dir, universe, title, characters, relationships, story_arcs,
+                recurring_jokes, character_growth, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(video_dir) DO UPDATE SET
+                universe=excluded.universe,
+                title=excluded.title,
+                characters=excluded.characters,
+                story_arcs=excluded.story_arcs,
+                recurring_jokes=excluded.recurring_jokes,
+                updated_at=excluded.updated_at
+            """,
+            (
+                str(video_dir),
+                universe,
+                plan.get("title", ""),
+                characters,
+                "",
+                story_arc,
+                recurring_jokes,
+                "",
+                now,
+                now,
+            ),
         )

@@ -24,8 +24,11 @@ def score_video_package(video_dir: Path) -> dict:
     has_visuals = visuals_available(video_dir)
     visual_result = load_visual_result(video_dir)
     ai_video_result = load_ai_video_result(video_dir)
+    real_ai_scene_count = int(ai_video_result.get("real_ai_scene_count", 0) or 0)
+    image_motion_scene_count = int(ai_video_result.get("image_motion_scene_count", 0) or 0)
+    image_only_scene_count = int(ai_video_result.get("image_only_scene_count", 0) or 0)
     ai_movie_ready = bool(
-        ai_video_result.get("generated_count", 0) >= 4
+        real_ai_scene_count >= 4
         and ai_video_result.get("character_consistency_score", 0) >= 75
         and ai_video_result.get("visual_quality_score", 0) >= 75
         and ai_video_result.get("motion_quality_score", 0) >= 70
@@ -61,6 +64,9 @@ def score_video_package(video_dir: Path) -> dict:
         "publish_score": publish_score,
         "publish_ready": publish_ready,
         "ai_movie_ready": ai_movie_ready,
+        "real_ai_scene_count": real_ai_scene_count,
+        "image_motion_scene_count": image_motion_scene_count,
+        "image_only_scene_count": image_only_scene_count,
         "character_consistency_score": ai_video_result.get("character_consistency_score", 0),
         "motion_quality_score": ai_video_result.get("motion_quality_score", 0),
         "requirements": {
@@ -68,6 +74,9 @@ def score_video_package(video_dir: Path) -> dict:
             "preview_mp4": has_preview,
             "voiceover_mp3": has_audio,
             "ai_scene_videos": ai_movie_ready,
+            "real_ai_scene_count": real_ai_scene_count,
+            "image_motion_scene_count": image_motion_scene_count,
+            "image_only_scene_count": image_only_scene_count,
             "real_video_clips": has_clips,
             "real_ai_visuals": bool(visual_result.get("real_visuals_ready")),
         },

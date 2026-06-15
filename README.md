@@ -98,14 +98,14 @@ V5 provider mimarisi tek bir provider'a bagli degildir. Engine her scene icin en
 Varsayilan siralama:
 
 ```text
-veo3 -> veo3fast -> runway -> kling -> pixverse -> hailuo -> replicate -> ltx -> scene_image_motion -> stock fallback
+veo3 -> runway -> kling -> hailuo -> pixverse -> replicate true-video fallback -> ltx preview fallback -> scene_image_motion preview fallback -> stock fallback
 ```
 
 Ortam ayarlari:
 
 ```powershell
 setx AI_VIDEO_PROVIDER_MODE auto
-setx AI_VIDEO_PROVIDER_PRIORITY "veo3,veo3fast,runway,kling,pixverse,hailuo,replicate,ltx,scene_image_motion"
+setx AI_VIDEO_PROVIDER_PRIORITY "veo3,runway,kling,hailuo,pixverse,replicate,ltx,scene_image_motion"
 setx GOOGLE_AI_API_KEY "your_google_key"
 setx VEO_MODEL "veo-3"
 setx VEO_FAST_MODEL "veo-3-fast"
@@ -148,7 +148,17 @@ Kalite kapisi:
 - `character_consistency >= 75`
 - `motion_quality >= 70`
 
-Bir scene video bu esikleri gecmezse silinir ve siradaki provider denenir. `ai_movie_ready=true` sadece en az 4 kabul edilmis scene MP4 dosyasi varsa yazilir.
+Bir scene video bu esikleri gecmezse silinir ve siradaki provider denenir. `ai_movie_ready=true` sadece en az 4 kabul edilmis gercek AI scene MP4 dosyasi varsa yazilir.
+
+Scene type metadata:
+
+- `ai_video`: gerçek AI video generation provider çıktısı. Publish-ready için sadece bu sayılır.
+- `image_motion`: still image üstüne FFmpeg/LTX-style zoom/pan motion. Preview/test fallback olabilir, publish-ready sayılmaz.
+- `image_only`: sadece scene image var, gerçek hareketli karakter videosu yok. Publish-ready sayılmaz.
+
+`publish_ready=false` kalır eğer paket yalnızca `scene-images/`, `image_motion`, stock fallback veya FFmpeg motion içeriyorsa. Amaç hareket eden fotoğraf değil, gerçek AI-generated animated character scene üretmektir.
+
+Replicate yalnızca gerçek video generation modeli (`REPLICATE_VIDEO_MODEL`) ile kullanılmalıdır. Image-only veya image-edit modeli seçilirse paket publish-ready olarak değerlendirilmemelidir.
 
 Provider health dosyasi:
 
@@ -181,6 +191,50 @@ setx ELEVENLABS_API_KEY "your_elevenlabs_key"
 ```
 
 Stock footage artik son care fallback'tir. AI scene videos varsa stock footage kullanilmaz.
+
+## V6 AI Animation Studio
+
+V6 hedefi trend ozeti degil, otonom AI animation studio davranisidir. Sistem universes, recurring characters ve episode memory ile calisir.
+
+Universe sistemi:
+
+- Funny Animals
+- Funny Kids
+- Horror
+- Minecraft
+- Sports
+- Celebrity
+- Relationship
+- Reddit Stories
+- Custom
+
+Her karakter global `studio/character-library.json` icinde saklanir:
+
+- id
+- name
+- appearance
+- voice
+- personality
+- memory
+- universe
+
+Episode memory `studio/episode-memory.json` ve `learning.db` icinde tutulur:
+
+- previous episodes
+- relationships
+- story arcs
+- recurring jokes
+- character growth
+
+Publish gate kesin kural:
+
+- `image_only`: publish-ready degil
+- `image_motion`: publish-ready degil
+- FFmpeg/Ken Burns/zoom/pan motion: publish-ready degil
+- Stock fallback: publish-ready degil
+- Sadece `scene_type=ai_video` ve en az 4 gercek AI scene video varsa publish-ready olabilir
+
+Renderer production path sadece real AI scene videos icindir. Image motion ancak local preview/test fallback olabilir.
 
 ### Replicate AI Video Provider
 

@@ -63,6 +63,22 @@ class AIMovieEngineV4Tests(unittest.TestCase):
         ids = [character["id"] for character in bible["characters"]]
         self.assertEqual(ids, ["bob_cat", "carl_chicken"])
         self.assertTrue(all(character.get("appearance_hash") for character in bible["characters"]))
+        self.assertEqual(bible["universe"]["id"], "funny_animals")
+        self.assertTrue(all(character.get("voice") for character in bible["characters"]))
+        self.assertTrue(all(character.get("universe") == "funny_animals" for character in bible["characters"]))
+
+    def test_global_character_library_and_episode_memory_are_written(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._package(root / "run")
+            library = json.loads((root / "studio" / "character-library.json").read_text(encoding="utf-8"))
+            memory = json.loads((root / "studio" / "episode-memory.json").read_text(encoding="utf-8"))
+
+        self.assertIn("bob_cat", library["characters"])
+        self.assertEqual(library["characters"]["bob_cat"]["universe"], "funny_animals")
+        self.assertEqual(library["characters"]["bob_cat"]["appearance"], "orange tabby cat, green eyes, red baseball cap, small scar on left ear")
+        self.assertEqual(memory["episodes"][0]["universe"], "funny_animals")
+        self.assertIn("funny_animals", memory["universes"])
 
     def test_storyboard_prompts_include_exact_character_appearance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -98,7 +114,13 @@ class AIMovieEngineV4Tests(unittest.TestCase):
             for index in range(1, 5):
                 (video_dir / "scene-videos" / f"scene-{index:02d}.mp4").write_bytes(b"ai")
             (video_dir / "ai-video-result.json").write_text(
-                json.dumps({"generated_count": 4, "scenes": [{"file": f"scene-videos/scene-{index:02d}.mp4"} for index in range(1, 5)]}),
+                json.dumps(
+                    {
+                        "generated_count": 4,
+                        "real_ai_scene_count": 4,
+                        "scenes": [{"scene_type": "ai_video", "file": f"scene-videos/scene-{index:02d}.mp4"} for index in range(1, 5)],
+                    }
+                ),
                 encoding="utf-8",
             )
             with patch("shorts_automation.renderer.ffmpeg_available", return_value=True):
@@ -121,6 +143,7 @@ class AIMovieEngineV4Tests(unittest.TestCase):
                         "provider": "veo",
                         "scene_count": 5,
                         "generated_count": 5,
+                        "real_ai_scene_count": 5,
                         "character_consistency_score": 90,
                         "visual_quality_score": 88,
                         "motion_quality_score": 84,
@@ -186,8 +209,11 @@ class AIMovieEngineV4Tests(unittest.TestCase):
 
             self.assertEqual(result["provider"], "replicate")
             self.assertEqual(result["generated_count"], 5)
+            self.assertEqual(result["real_ai_scene_count"], 5)
+            self.assertEqual(result["image_motion_scene_count"], 0)
             self.assertEqual(result["failed_count"], 0)
             self.assertTrue(result["ai_movie_ready"])
+            self.assertEqual(result["scenes"][0]["scene_type"], "ai_video")
             self.assertTrue((video_dir / "scene-videos" / "scene-01.mp4").exists())
             self.assertEqual((video_dir / "scene-videos" / "scene-01.mp4").read_bytes(), b"mp4")
             first_create_request = requests[0]
@@ -266,8 +292,11 @@ class AIMovieEngineV4Tests(unittest.TestCase):
             status = json.loads((video_dir / "providers-status.json").read_text(encoding="utf-8"))
 
         self.assertEqual(result["generated_count"], 5)
-        self.assertTrue(result["ai_movie_ready"])
+        self.assertEqual(result["real_ai_scene_count"], 0)
+        self.assertEqual(result["image_motion_scene_count"], 5)
+        self.assertFalse(result["ai_movie_ready"])
         self.assertEqual(result["scenes"][0]["provider"], fallback_provider)
+        self.assertEqual(result["scenes"][0]["scene_type"], "image_motion")
         self.assertEqual(status["providers"]["replicate"]["configured"], False)
         self.assertEqual(status["providers"][fallback_provider]["success_count"], 5)
         self.assertNotIn("image_path", json.dumps(result))
@@ -304,6 +333,8 @@ class AIMovieEngineV4Tests(unittest.TestCase):
         self.assertEqual(result["provider_priority"][:3], ["veo3", "runway", "replicate"])
         self.assertTrue(result["ai_movie_ready"])
         self.assertEqual(result["generated_count"], 5)
+        self.assertEqual(result["real_ai_scene_count"], 5)
+        self.assertEqual(result["image_motion_scene_count"], 0)
         first_scene_chain = [attempt["provider"] for attempt in result["scenes"][0]["fallback_chain"]]
         self.assertEqual(first_scene_chain, ["veo3", "runway", "replicate"])
         self.assertEqual(status["providers"]["veo3"]["failure_count"], 5)
@@ -323,6 +354,47 @@ class AIMovieEngineV4Tests(unittest.TestCase):
 
         self.assertFalse(result["ai_movie_ready"])
         self.assertFalse(result["requirements"]["ai_scene_videos"])
+
+    def test_quality_rejects_image_motion_as_full_ai_movie(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            (video_dir / "final.mp4").write_bytes(b"mp4")
+            (video_dir / "voiceover.mp3").write_bytes(b"audio")
+            (video_dir / "ai-video-result.json").write_text(
+                json.dumps(
+                    {
+                        "generated_count": 5,
+                        "real_ai_scene_count": 0,
+                        "image_motion_scene_count": 5,
+                        "image_only_scene_count": 0,
+                        "character_consistency_score": 78,
+                        "visual_quality_score": 78,
+                        "motion_quality_score": 72,
+                        "ai_movie_ready": False,
+                        "scenes": [
+                            {"scene": index, "scene_type": "image_motion", "provider": "ltx", "file": f"scene-videos/scene-{index:02d}.mp4"}
+                            for index in range(1, 6)
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = score_video_package(video_dir)
+
+        self.assertFalse(result["ai_movie_ready"])
+        self.assertFalse(result["publish_ready"])
+        self.assertEqual(result["real_ai_scene_count"], 0)
+        self.assertEqual(result["image_motion_scene_count"], 5)
+
+    def test_final_renderer_blocks_image_only_without_real_ai_video(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            (video_dir / "final.mp4").write_bytes(b"old")
+            with patch("shorts_automation.renderer.ffmpeg_available", return_value=True):
+                result = render_video_package(video_dir, preview=False)
+
+        self.assertFalse(result["rendered"])
+        self.assertIn("requires real AI generated scene videos", result["warning"])
 
 
 if __name__ == "__main__":

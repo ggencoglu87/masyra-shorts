@@ -486,7 +486,10 @@ def dashboard_asset_status(video_dir: Path) -> dict:
     tts_result = _read_json(video_dir / "tts-result.json")
     final_exists = (video_dir / "final.mp4").exists()
     ai_generated_count = int(ai_video_result.get("generated_count", 0) or 0)
-    ai_videos_ready = ai_generated_count >= 4
+    real_ai_scene_count = int(ai_video_result.get("real_ai_scene_count", 0) or 0)
+    image_motion_scene_count = int(ai_video_result.get("image_motion_scene_count", 0) or 0)
+    image_only_scene_count = int(ai_video_result.get("image_only_scene_count", 0) or 0)
+    ai_videos_ready = real_ai_scene_count >= 4
     real_clip_count = int(clip_result.get("real_clip_count", 0) or 0)
     clip_count = int(clip_result.get("clip_count", 0) or 0)
     clips_ready = real_clip_count >= 3 and final_exists
@@ -512,6 +515,9 @@ def dashboard_asset_status(video_dir: Path) -> dict:
         "ai_generation_duration": _ai_generation_duration(ai_video_result),
         "ai_scene_count": int(ai_video_result.get("scene_count", 0) or 0),
         "ai_generated_count": ai_generated_count,
+        "real_ai_scene_count": real_ai_scene_count,
+        "image_motion_scene_count": image_motion_scene_count,
+        "image_only_scene_count": image_only_scene_count,
         "character_consistency_score": ai_video_result.get("character_consistency_score", 0),
         "visual_quality_score": ai_video_result.get("visual_quality_score", 0),
         "motion_quality_score": ai_video_result.get("motion_quality_score", 0),
@@ -535,11 +541,15 @@ def dashboard_asset_status(video_dir: Path) -> dict:
 def visual_badge(package: dict) -> str:
     status = package.get("asset_status", {})
     if status.get("ai_videos_ready"):
-        return '<span class="pill status-approved">AI Videos Ready</span>'
+        return '<span class="pill status-approved">AI VIDEO</span>'
+    if status.get("image_motion_scene_count", 0) >= 4:
+        return '<span class="pill status-needs-edit">IMAGE MOTION</span>'
+    if status.get("image_only_scene_count", 0) >= 4:
+        return '<span class="pill status-needs-edit">IMAGE ONLY</span>'
     if status.get("clips_ready"):
         return '<span class="pill status-needs-edit">Stock Fallback Used</span>'
     if status.get("real_openai_visuals_ready"):
-        return '<span class="pill status-approved">OpenAI Visuals Ready</span>'
+        return '<span class="pill status-needs-edit">IMAGE ONLY</span>'
     return '<span class="pill status-rejected">VISUALS NOT GENERATED</span>'
 
 
@@ -606,6 +616,9 @@ def asset_status_section(status: dict) -> str:
       {score_box("Fallback Chain", ", ".join(status.get("ai_provider_fallback_chain", [])) or "missing")}
       {score_box("Video Gen Time", status.get("ai_generation_duration", "missing"))}
       {score_box("AI Scenes", f"{status.get('ai_generated_count', 0)}/{status.get('ai_scene_count', 0)}")}
+      {score_box("Real AI Scenes", status.get("real_ai_scene_count", 0))}
+      {score_box("Image Motion", status.get("image_motion_scene_count", 0))}
+      {score_box("Image Only", status.get("image_only_scene_count", 0))}
       {score_box("Character Consistency", status.get("character_consistency_score", 0))}
       {score_box("Motion Quality", status.get("motion_quality_score", 0))}
       {score_box("Clip Count", status.get("clip_count", 0))}
@@ -687,6 +700,7 @@ def ai_video_section(output_dir: Path, video_dir: Path, result: dict) -> str:
         media = '<div class="scene-missing">Missing AI video</div>'
         if path.exists():
             media = f'<video controls muted preload="metadata" class="scene-image" src="{_media_url(output_dir, path, cache_bust=True)}"></video>'
+        scene_type = _scene_type_label(scene.get("scene_type", "image_only"))
         cards.append(
             f"""
             <article class="scene-card">
@@ -695,6 +709,7 @@ def ai_video_section(output_dir: Path, video_dir: Path, result: dict) -> str:
                 <div class="scene-meta">
                   <span>Scene {_e(scene.get("scene", ""))}</span>
                   <span>{_e(scene.get("provider", ""))}</span>
+                  {scene_type}
                 </div>
                 <p>{_e(scene.get("warning", ""))}</p>
               </div>
@@ -707,6 +722,9 @@ def ai_video_section(output_dir: Path, video_dir: Path, result: dict) -> str:
         <h2>AI Scene Videos</h2>
         <span class="pill">Provider: {_e(result.get("provider", "unknown"))}</span>
         <span class="pill">Generated: {_e(result.get("generated_count", 0))}/{_e(result.get("scene_count", 0))}</span>
+        <span class="pill">AI VIDEO: {_e(result.get("real_ai_scene_count", 0))}</span>
+        <span class="pill">IMAGE MOTION: {_e(result.get("image_motion_scene_count", 0))}</span>
+        <span class="pill">IMAGE ONLY: {_e(result.get("image_only_scene_count", 0))}</span>
         <span class="pill">AI movie ready: {_e(result.get("ai_movie_ready", False))}</span>
       </div>
       <div class="timeline-grid">{''.join(cards)}</div>
@@ -876,6 +894,16 @@ def _placeholder_warning(manifest: dict, asset_status: dict | None = None) -> st
     if any(scene.get("provider") == "placeholder" for scene in manifest.get("scenes", [])):
         return '<div class="visual-warning">Placeholder visuals only — not ready for publishing.</div>'
     return ""
+
+
+def _scene_type_label(scene_type: str) -> str:
+    labels = {
+        "ai_video": "AI VIDEO",
+        "image_motion": "IMAGE MOTION",
+        "image_only": "IMAGE ONLY",
+    }
+    css = "status-approved" if scene_type == "ai_video" else "status-needs-edit"
+    return f'<span class="pill {css}">{_e(labels.get(scene_type, scene_type or "IMAGE ONLY"))}</span>'
 
 
 def _ai_generation_duration(result: dict) -> str:

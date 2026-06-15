@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .character_bible import build_character_bible, character_prompt_text
 from .scoring import score_trend
+from .studio_memory import update_studio_memory
 
 
 VIRAL_CATEGORIES = [
@@ -95,6 +96,7 @@ def make_content_item(trend: dict, rank: int, channel_name: str) -> dict:
             "evidence": trend.get("evidence", []),
             "urls": trend.get("urls", []),
         },
+        "universe": character_bible.get("universe", {}),
         "scores": {
             "trend_score": trend["trend_score"],
             "growth_score": trend["growth_score"],
@@ -142,6 +144,7 @@ def make_content_item(trend: dict, rank: int, channel_name: str) -> dict:
             "caption_style": "TikTok word-by-word large burned captions",
             "visual_style": visual_style_for_category(category),
             "asset_policy": "Use AI-generated character images and AI scene videos first. Stock footage is fallback only.",
+            "publish_gate": "Publish-ready requires real AI generated scene videos. Image-only, image-motion, FFmpeg motion, and stock fallback are not publish-ready.",
         },
         "copyright_safe": True,
     }
@@ -185,6 +188,7 @@ def write_video_packages(plan: dict, output_root: Path) -> list[Path]:
             path = video_dir / filename
             path.write_text(content, encoding="utf-8")
             written.append(path)
+        update_studio_memory(output_root, video_dir, item)
 
     return written
 
@@ -195,7 +199,7 @@ def make_asset_prompts(item: dict) -> dict:
     storyboard = item.get("storyboard", [])
     character_bible = item.get("character_bible", {})
     return {
-        "policy": "Primary visual path is AI-generated cinematic character scenes. Stock footage is fallback only.",
+        "policy": "Primary visual path is true AI-generated cinematic character video scenes. Image-only and image-motion are preview fallbacks only.",
         "style": character_bible.get("style", ""),
         "characters": character_bible.get("characters", []),
         "scenes": [
@@ -286,7 +290,7 @@ def make_render_brief(item: dict) -> str:
             f"Voice style: {item['voice_profile']['style']}",
             f"Visual style: {item['production']['visual_style']}",
             "Footage rule: no copied trend footage and no copyrighted clips.",
-            "Renderer priority: AI scene videos, AI character images, stock fallback, placeholder test fallback.",
+            "Renderer production priority: real AI scene videos only. Image motion and still images are preview fallbacks and are not publish-ready.",
         ]
     )
 

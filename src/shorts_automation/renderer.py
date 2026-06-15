@@ -31,12 +31,14 @@ def render_video_package(
     preview: bool = False,
 ) -> dict:
     video_dir = video_dir.resolve()
+    scene_type_counts = _scene_type_counts(video_dir)
     if not ffmpeg_available():
         return {
             "video_dir": str(video_dir),
             "rendered": False,
             "output": None,
             "warning": "FFmpeg not found. Keeping script, subtitles, and metadata files only.",
+            **scene_type_counts,
         }
 
     plan_path = video_dir / "video-plan.json"
@@ -60,6 +62,16 @@ def render_video_package(
             duration_seconds=duration_seconds,
             preview=preview,
         )
+
+    if not preview:
+        return {
+            "video_dir": str(video_dir),
+            "rendered": False,
+            "output": None,
+            "warning": "V6 production render blocked: final.mp4 requires real AI generated scene videos. Image-only, image-motion, stock, and FFmpeg motion fallbacks are preview-only.",
+            "preview": preview,
+            **scene_type_counts,
+        }
 
     clip_paths = _video_clip_paths(video_dir)
     if len(clip_paths) >= 3:
@@ -158,6 +170,7 @@ def render_video_package(
         "audio_used": voiceover_path.exists(),
         "preview": preview,
         "visuals_used": False,
+        **scene_type_counts,
         "warning": _combine_warnings(
             "REAL VIDEO CLIPS AND VISUALS NOT GENERATED: rendered fallback background.",
             None if voiceover_path.exists() else "Rendered silent video: voiceover.mp3 not found.",
@@ -240,6 +253,7 @@ def _render_ai_scene_video(
         "preview": preview,
         "ai_scene_videos_used": True,
         "scene_video_count": len(selected_videos),
+        **_scene_type_counts(video_dir),
         "warning": None if voiceover_path.exists() else "Rendered silent video: voiceover.mp3 not found.",
     }
 
@@ -366,6 +380,7 @@ def _render_scene_video(
         "preview": preview,
         "visuals_used": True,
         "scene_count": len(selected_images),
+        **_scene_type_counts(video_dir, image_only_override=len(selected_images)),
         "warning": None if voiceover_path.exists() else "Rendered silent video: voiceover.mp3 not found.",
     }
 
@@ -447,6 +462,7 @@ def _render_clip_video(
         "preview": preview,
         "video_clips_used": True,
         "clip_count": len(selected_clips),
+        **_scene_type_counts(video_dir),
         "warning": None if voiceover_path.exists() else "Rendered silent video: voiceover.mp3 not found.",
     }
 
@@ -469,14 +485,37 @@ def _ai_scene_video_paths(video_dir: Path) -> list[Path]:
     result = load_ai_video_result(video_dir)
     videos = []
     for scene in result.get("scenes", []):
+        if scene.get("scene_type") != "ai_video":
+            continue
         if not scene.get("file"):
             continue
         path = video_dir / scene["file"]
         if path.exists():
             videos.append(path)
-    if not videos:
-        videos = sorted((video_dir / "scene-videos").glob("scene-*.mp4"))
     return videos[:8]
+
+
+def _scene_type_counts(video_dir: Path, image_only_override: int | None = None) -> dict:
+    result = load_ai_video_result(video_dir)
+    real_ai = int(result.get("real_ai_scene_count", 0) or 0)
+    image_motion = int(result.get("image_motion_scene_count", 0) or 0)
+    image_only = int(result.get("image_only_scene_count", 0) or 0)
+    if not any([real_ai, image_motion, image_only]):
+        for scene in result.get("scenes", []):
+            scene_type = scene.get("scene_type")
+            if scene_type == "ai_video" and scene.get("file") and (video_dir / scene["file"]).exists():
+                real_ai += 1
+            elif scene_type == "image_motion" and scene.get("file") and (video_dir / scene["file"]).exists():
+                image_motion += 1
+            elif scene_type == "image_only":
+                image_only += 1
+    if image_only_override is not None:
+        image_only = max(image_only, image_only_override)
+    return {
+        "real_ai_scene_count": real_ai,
+        "image_motion_scene_count": image_motion,
+        "image_only_scene_count": image_only,
+    }
 
 
 def _scene_images(video_dir: Path) -> list[Path]:
