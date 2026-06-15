@@ -297,24 +297,14 @@ class ReplicateAIVideoProvider(AIVideoProvider):
                 "warning": "REPLICATE_API_TOKEN and REPLICATE_VIDEO_MODEL are required for AI video generation.",
             }
 
-        prompt = video_prompt.strip()
+        prompt = _safe_prompt(video_prompt, scene_id=scene_id)
         input_payload = self._build_input(prompt, negative_prompt, duration, scene_image, seed)
         request_payload = {"version": self.model, "input": input_payload}
-
-        created_prediction = self._json_request(
-            self.api_url,
-            method="POST",
-            payload=request_payload,
-            extra_headers={"Prefer": "wait=5"},
-        )
-        final_prediction = self._poll_prediction(created_prediction)
-        output_url = _extract_video_url(final_prediction.get("output"))
-
         result: dict[str, Any] = {
             "provider": self.name,
             "created": False,
-            "prediction_id": final_prediction.get("id") or created_prediction.get("id"),
-            "status": final_prediction.get("status"),
+            "prediction_id": None,
+            "status": None,
             "model": self.model,
             "prompt": prompt,
             "negative_prompt": negative_prompt,
@@ -323,8 +313,29 @@ class ReplicateAIVideoProvider(AIVideoProvider):
             "aspect_ratio": aspect_ratio,
             "seed": seed,
             "input": input_payload,
-            "provider_response": final_prediction,
         }
+
+        try:
+            created_prediction = self._json_request(
+                self.api_url,
+                method="POST",
+                payload=request_payload,
+                extra_headers={"Prefer": "wait=5"},
+            )
+            final_prediction = self._poll_prediction(created_prediction)
+        except Exception as exc:
+            result["warning"] = str(exc)
+            result["provider_response"] = {"error": str(exc)}
+            return result
+
+        output_url = _extract_video_url(final_prediction.get("output"))
+        result.update(
+            {
+                "prediction_id": final_prediction.get("id") or created_prediction.get("id"),
+                "status": final_prediction.get("status"),
+                "provider_response": final_prediction,
+            }
+        )
 
         if final_prediction.get("status") != "succeeded":
             result["warning"] = f"Replicate prediction did not succeed: {final_prediction.get('error') or final_prediction.get('status')}"
@@ -546,7 +557,7 @@ def generate_ai_videos_for_package(video_dir: Path, provider_name: str = "off", 
                 try:
                     generated = provider.generate_scene_video(
                         scene_id=index,
-                        video_prompt=str(scene.get("video_prompt") or scene.get("image_prompt") or scene.get("narration") or ""),
+                        video_prompt=_scene_prompt(scene, index),
                         negative_prompt=str(scene.get("negative_prompt") or ""),
                         duration=_bounded_duration(scene.get("duration", 4)),
                         aspect_ratio=str(scene.get("aspect_ratio") or "9:16"),
@@ -826,6 +837,23 @@ def _bounded_duration(value: object) -> int:
     except (TypeError, ValueError):
         duration = 4
     return max(2, min(duration, 8))
+
+
+def _scene_prompt(scene: dict, scene_id: int) -> str:
+    return _safe_prompt(
+        scene.get("video_prompt"),
+        scene.get("image_prompt"),
+        scene.get("narration"),
+        scene_id=scene_id,
+    )
+
+
+def _safe_prompt(*values: object, scene_id: int) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return f"Cinematic animated short film scene {scene_id}, expressive character action, vertical 9:16, no text."
 
 
 def _file_data_url(path: Path) -> str:

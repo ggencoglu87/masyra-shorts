@@ -247,6 +247,64 @@ class AIMovieEngineV4Tests(unittest.TestCase):
         payload = json.loads(requests[0].data.decode("utf-8"))
         self.assertNotIn("image", payload["input"])
 
+    def test_replicate_payload_uses_video_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            storyboard = json.loads((video_dir / "storyboard.json").read_text(encoding="utf-8"))
+            storyboard[0]["video_prompt"] = "A bright animated cat jumps over a table."
+            (video_dir / "storyboard.json").write_text(json.dumps([storyboard[0]], ensure_ascii=False), encoding="utf-8")
+            requests = []
+
+            def fake_urlopen(request, timeout=120):
+                requests.append(request)
+                if request.full_url.endswith("/v1/predictions"):
+                    return FakeHTTPResponse({"id": "pred", "status": "succeeded", "output": "https://replicate.delivery/output.mp4"})
+                return FakeHTTPResponse(b"mp4")
+
+            with patch.dict(
+                "os.environ",
+                {"REPLICATE_API_TOKEN": "r8_test", "REPLICATE_VIDEO_MODEL": "minimax/video-01", "REPLICATE_POLL_INTERVAL_SECONDS": "0"},
+            ):
+                with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                    result = generate_ai_videos_for_package(video_dir, provider_name="replicate", force=True)
+
+            payload = json.loads(requests[0].data.decode("utf-8"))
+
+        self.assertEqual(payload["input"]["prompt"], "A bright animated cat jumps over a table.")
+        self.assertEqual(result["scenes"][0]["prompt"], "A bright animated cat jumps over a table.")
+
+    def test_replicate_payload_falls_back_to_narration_when_prompts_are_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            scene = {
+                "scene": 1,
+                "video_prompt": "",
+                "image_prompt": "",
+                "narration": "The chicken slowly realizes the cat saw everything.",
+                "negative_prompt": "text, watermark",
+                "duration": 4,
+            }
+            (video_dir / "storyboard.json").write_text(json.dumps([scene], ensure_ascii=False), encoding="utf-8")
+            requests = []
+
+            def fake_urlopen(request, timeout=120):
+                requests.append(request)
+                if request.full_url.endswith("/v1/predictions"):
+                    return FakeHTTPResponse({"id": "pred", "status": "succeeded", "output": "https://replicate.delivery/output.mp4"})
+                return FakeHTTPResponse(b"mp4")
+
+            with patch.dict(
+                "os.environ",
+                {"REPLICATE_API_TOKEN": "r8_test", "REPLICATE_VIDEO_MODEL": "minimax/video-01", "REPLICATE_POLL_INTERVAL_SECONDS": "0"},
+            ):
+                with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                    result = generate_ai_videos_for_package(video_dir, provider_name="replicate", force=True)
+
+            payload = json.loads(requests[0].data.decode("utf-8"))
+
+        self.assertEqual(payload["input"]["prompt"], "The chicken slowly realizes the cat saw everything.")
+        self.assertEqual(result["scenes"][0]["prompt"], "The chicken slowly realizes the cat saw everything.")
+
     def test_v5_default_auto_provider_chain_includes_replicate_before_local_fallbacks(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             providers = [provider.name for provider in select_ai_video_providers("auto")]
