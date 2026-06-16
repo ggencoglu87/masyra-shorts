@@ -25,6 +25,19 @@ QUALITY_THRESHOLDS = {
 DEFAULT_PROVIDER_PRIORITY = "veo3,runway,kling,hailuo,pixverse,replicate,ltx,scene_image_motion"
 
 
+class ReplicateRateLimitError(RuntimeError):
+    def __init__(self, message: str, *, retry_after: float | None = None, body: str = "") -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+        self.body = body
+
+
+class AIVideoGenerationInterrupted(KeyboardInterrupt):
+    def __init__(self, partial_result: dict) -> None:
+        super().__init__("AI video generation interrupted.")
+        self.partial_result = partial_result
+
+
 class AIVideoProvider:
     name = "base"
 
@@ -310,9 +323,13 @@ class ReplicateAIVideoProvider(AIVideoProvider):
             "provider": self.name,
             "created": False,
             "prediction_id": None,
+            "prediction_status": None,
+            "status_url": None,
+            "output_url": None,
             "status": None,
             "model": self.model,
             "prompt": prompt,
+            "resolved_prompt": prompt,
             "final_resolved_prompt": prompt,
             "video_prompt": str(raw_scene.get("video_prompt", "") if raw_scene is not None else video_prompt or ""),
             "image_prompt": str(raw_scene.get("image_prompt", "") if raw_scene is not None else ""),
@@ -326,6 +343,7 @@ class ReplicateAIVideoProvider(AIVideoProvider):
             "request_payload": request_payload,
         }
 
+        created_prediction: dict[str, Any] = {}
         try:
             created_prediction = self._json_request(
                 self.api_url,
@@ -333,7 +351,19 @@ class ReplicateAIVideoProvider(AIVideoProvider):
                 payload=request_payload,
                 extra_headers={"Prefer": "wait=5"},
             )
+            result.update(
+                {
+                    "prediction_id": created_prediction.get("id"),
+                    "prediction_status": created_prediction.get("status"),
+                    "status_url": (created_prediction.get("urls") or {}).get("get"),
+                    "provider_response": created_prediction,
+                }
+            )
             final_prediction = self._poll_prediction(created_prediction)
+        except KeyboardInterrupt as exc:
+            result["warning"] = "Interrupted during Replicate prediction polling; partial prediction metadata was saved."
+            result["provider_response"] = created_prediction or result.get("provider_response") or {}
+            raise AIVideoGenerationInterrupted(result) from exc
         except Exception as exc:
             result["warning"] = str(exc)
             result["provider_response"] = {"error": str(exc)}
@@ -344,6 +374,9 @@ class ReplicateAIVideoProvider(AIVideoProvider):
             {
                 "prediction_id": final_prediction.get("id") or created_prediction.get("id"),
                 "status": final_prediction.get("status"),
+                "prediction_status": final_prediction.get("status"),
+                "status_url": (final_prediction.get("urls") or created_prediction.get("urls") or {}).get("get"),
+                "output_url": output_url,
                 "provider_response": final_prediction,
             }
         )
@@ -381,7 +414,11 @@ class ReplicateAIVideoProvider(AIVideoProvider):
         current = prediction
         while time.monotonic() < deadline:
             time.sleep(self.poll_interval_seconds)
-            current = self._json_request(get_url, method="GET")
+            try:
+                current = self._json_request(get_url, method="GET")
+            except ReplicateRateLimitError as exc:
+                time.sleep(exc.retry_after if exc.retry_after is not None else self.poll_interval_seconds)
+                continue
             if current.get("status") in self.terminal_statuses:
                 return current
         return {**current, "status": "failed", "error": f"Timed out after {self.timeout_seconds} seconds waiting for Replicate prediction."}
@@ -413,6 +450,9 @@ class ReplicateAIVideoProvider(AIVideoProvider):
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 429:
+                retry_after = _retry_after_seconds(exc.headers.get("Retry-After"), body)
+                raise ReplicateRateLimitError(f"Replicate HTTP 429: {body}", retry_after=retry_after, body=body) from exc
             raise RuntimeError(f"Replicate HTTP {exc.code}: {body}") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"Replicate request failed: {exc.reason}") from exc
@@ -543,65 +583,145 @@ def generate_ai_videos_for_package(video_dir: Path, provider_name: str = "off", 
     scenes = []
     failed = 0
     provider_status = _initial_provider_status(providers)
-    for index, scene in enumerate(storyboard, start=1):
-        output_path = output_dir / f"scene-{index:02d}.mp4"
-        image_path = video_dir / "scene-images" / f"scene-{index:02d}.png"
-        if output_path.exists() and not force:
-            scenes.append({"scene": index, "provider": "existing", "created": False, "skipped": True, "file": output_path.relative_to(video_dir).as_posix()})
-            continue
+    _persist_ai_video_progress(video_dir, provider_name, providers, storyboard, scenes, failed, provider_status, status="running", warning="AI video generation started.")
+    try:
+        for index, scene in enumerate(storyboard, start=1):
+            output_path = output_dir / f"scene-{index:02d}.mp4"
+            image_path = video_dir / "scene-images" / f"scene-{index:02d}.png"
+            if output_path.exists() and not force:
+                scenes.append({"scene": index, "provider": "existing", "created": False, "skipped": True, "file": output_path.relative_to(video_dir).as_posix()})
+                _persist_ai_video_progress(video_dir, provider_name, providers, storyboard, scenes, failed, provider_status, status="running")
+                continue
 
-        attempts = []
-        accepted: dict | None = None
-        for provider in providers:
-            configured = provider.configured()
-            available = provider.available()
-            started = time.monotonic()
-            if not available:
-                generated = {
-                    "provider": provider.name,
-                    "created": False,
-                    "configured": configured,
-                    "available": available,
-                    "warning": _missing_provider_warning(provider.name),
-                }
-                elapsed = 0.0
+            attempts = []
+            accepted: dict | None = None
+            for provider in providers:
+                configured = provider.configured()
+                available = provider.available()
+                started = time.monotonic()
+                if not available:
+                    generated = {
+                        "provider": provider.name,
+                        "created": False,
+                        "configured": configured,
+                        "available": available,
+                        "warning": _missing_provider_warning(provider.name),
+                    }
+                    elapsed = 0.0
+                else:
+                    try:
+                        generated = provider.generate_scene_video(
+                            scene_id=index,
+                            video_prompt=_scene_prompt(scene, index),
+                            negative_prompt=str(scene.get("negative_prompt") or ""),
+                            duration=_bounded_duration(scene.get("duration", 4)),
+                            aspect_ratio=str(scene.get("aspect_ratio") or "9:16"),
+                            scene_image=image_path if image_path.exists() else None,
+                            output_path=output_path,
+                            seed=index,
+                            raw_scene=scene,
+                        )
+                    except AIVideoGenerationInterrupted as exc:
+                        elapsed = round(time.monotonic() - started, 3)
+                        generated = {**exc.partial_result, "configured": configured, "available": available, "generation_time": elapsed}
+                        quality = _score_scene_attempt(provider.name, generated, output_path.exists())
+                        generated["quality_scores"] = quality
+                        generated["quality_accepted"] = False
+                        attempts.append(generated)
+                        _update_provider_status(provider_status, provider, generated, elapsed)
+                        scenes.append(
+                            {
+                                "scene": index,
+                                "created": False,
+                                "scene_type": "image_only",
+                                "fallback_chain": attempts,
+                                "warning": "Interrupted before this scene could be accepted.",
+                            }
+                        )
+                        _persist_ai_video_progress(
+                            video_dir,
+                            provider_name,
+                            providers,
+                            storyboard,
+                            scenes,
+                            failed,
+                            provider_status,
+                            status="interrupted",
+                            warning="Interrupted by user; partial AI video progress was saved.",
+                        )
+                        raise
+                    except KeyboardInterrupt:
+                        raise
+                    except Exception as exc:
+                        generated = {"provider": provider.name, "created": False, "warning": str(exc)}
+                    elapsed = round(time.monotonic() - started, 3)
+
+                generated = {**generated, "configured": configured, "available": available, "generation_time": elapsed}
+                quality = _score_scene_attempt(provider.name, generated, output_path.exists())
+                generated["quality_scores"] = quality
+                generated["quality_accepted"] = _quality_passes(quality)
+                attempts.append(generated)
+                _update_provider_status(provider_status, provider, generated, elapsed)
+
+                if generated.get("created") and output_path.exists() and generated["quality_accepted"]:
+                    accepted = {**generated, "scene": index, "file": output_path.relative_to(video_dir).as_posix()}
+                    break
+                if generated.get("created") and output_path.exists():
+                    output_path.unlink(missing_ok=True)
+
+            if accepted:
+                accepted = {**accepted, "scene_type": _scene_type_for_provider(accepted.get("provider", ""))}
+                scenes.append({**accepted, "fallback_chain": attempts})
             else:
-                try:
-                    generated = provider.generate_scene_video(
-                        scene_id=index,
-                        video_prompt=_scene_prompt(scene, index),
-                        negative_prompt=str(scene.get("negative_prompt") or ""),
-                        duration=_bounded_duration(scene.get("duration", 4)),
-                        aspect_ratio=str(scene.get("aspect_ratio") or "9:16"),
-                        scene_image=image_path if image_path.exists() else None,
-                        output_path=output_path,
-                        seed=index,
-                        raw_scene=scene,
-                    )
-                except Exception as exc:
-                    generated = {"provider": provider.name, "created": False, "warning": str(exc)}
-                elapsed = round(time.monotonic() - started, 3)
+                failed += 1
+                scenes.append({"scene": index, "created": False, "scene_type": "image_only", "fallback_chain": attempts, "warning": "No provider produced an accepted scene video."})
+            _persist_ai_video_progress(video_dir, provider_name, providers, storyboard, scenes, failed, provider_status, status="running")
+    except KeyboardInterrupt:
+        result = _persist_ai_video_progress(
+            video_dir,
+            provider_name,
+            providers,
+            storyboard,
+            scenes,
+            failed,
+            provider_status,
+            status="interrupted",
+            warning="Interrupted by user; partial AI video progress was saved.",
+        )
+        result["interrupted"] = True
+        raise
 
-            generated = {**generated, "configured": configured, "available": available, "generation_time": elapsed}
-            quality = _score_scene_attempt(provider.name, generated, output_path.exists())
-            generated["quality_scores"] = quality
-            generated["quality_accepted"] = _quality_passes(quality)
-            attempts.append(generated)
-            _update_provider_status(provider_status, provider, generated, elapsed)
+    return _persist_ai_video_progress(video_dir, provider_name, providers, storyboard, scenes, failed, provider_status, status="completed")
 
-            if generated.get("created") and output_path.exists() and generated["quality_accepted"]:
-                accepted = {**generated, "scene": index, "file": output_path.relative_to(video_dir).as_posix()}
-                break
-            if generated.get("created") and output_path.exists():
-                output_path.unlink(missing_ok=True)
 
-        if accepted:
-            accepted = {**accepted, "scene_type": _scene_type_for_provider(accepted.get("provider", ""))}
-            scenes.append({**accepted, "fallback_chain": attempts})
-        else:
-            failed += 1
-            scenes.append({"scene": index, "created": False, "scene_type": "image_only", "fallback_chain": attempts, "warning": "No provider produced an accepted scene video."})
+def _persist_ai_video_progress(
+    video_dir: Path,
+    provider_name: str,
+    providers: list[AIVideoProvider],
+    storyboard: list[dict],
+    scenes: list[dict],
+    failed: int,
+    provider_status: dict,
+    *,
+    status: str,
+    warning: str | None = None,
+) -> dict:
+    _write_provider_status(video_dir, provider_status)
+    result = _build_ai_video_result(video_dir, provider_name, providers, storyboard, scenes, failed, status=status, warning=warning)
+    return _write_result(video_dir, result)
 
+
+def _build_ai_video_result(
+    video_dir: Path,
+    provider_name: str,
+    providers: list[AIVideoProvider],
+    storyboard: list[dict],
+    scenes: list[dict],
+    failed: int,
+    *,
+    status: str,
+    warning: str | None = None,
+) -> dict:
     generated_count = len([scene for scene in scenes if scene.get("file") and (video_dir / scene["file"]).exists()])
     real_ai_scene_count = len([scene for scene in scenes if scene.get("scene_type") == "ai_video" and scene.get("file") and (video_dir / scene["file"]).exists()])
     image_motion_scene_count = len([scene for scene in scenes if scene.get("scene_type") == "image_motion" and scene.get("file") and (video_dir / scene["file"]).exists()])
@@ -609,9 +729,11 @@ def generate_ai_videos_for_package(video_dir: Path, provider_name: str = "off", 
     consistency = _average_scene_quality(scenes, "character_consistency")
     visual = _average_scene_quality(scenes, "visual_quality")
     motion = _average_scene_quality(scenes, "motion_quality")
-    ai_movie_ready = real_ai_scene_count >= MIN_AI_SCENE_VIDEOS and consistency >= 75 and visual >= 75 and motion >= 70
+    ai_movie_ready = status == "completed" and real_ai_scene_count >= MIN_AI_SCENE_VIDEOS and consistency >= 75 and visual >= 75 and motion >= 70
     result = {
         "video_dir": str(video_dir),
+        "status": status,
+        "run_status": status,
         "provider": scenes[0].get("provider", providers[0].name) if scenes else providers[0].name,
         "provider_mode": provider_name,
         "provider_priority": [provider.name for provider in providers],
@@ -629,8 +751,9 @@ def generate_ai_videos_for_package(video_dir: Path, provider_name: str = "off", 
         "scenes": scenes,
         "providers_status_path": str(video_dir / "providers-status.json"),
     }
-    _write_provider_status(video_dir, provider_status)
-    return _write_result(video_dir, result)
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 def generate_ai_videos_for_dirs(video_dirs: list[Path], provider_name: str = "off", force: bool = False) -> dict:
@@ -903,3 +1026,20 @@ def _nested_value(data: object, path: str) -> object:
         else:
             return None
     return current
+
+
+def _retry_after_seconds(header_value: str | None, body: str) -> float | None:
+    if header_value:
+        try:
+            return max(0.0, float(header_value))
+        except ValueError:
+            return None
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+    value = parsed.get("retry_after") if isinstance(parsed, dict) else None
+    try:
+        return max(0.0, float(value)) if value is not None else None
+    except (TypeError, ValueError):
+        return None

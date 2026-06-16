@@ -351,6 +351,144 @@ class AIMovieEngineV4Tests(unittest.TestCase):
         self.assertEqual(attempt["request_payload"]["input"]["prompt"], "A worried orange cat stares at a broken fish bowl.")
         self.assertIn("HTTP 422", attempt["warning"])
 
+    def test_result_file_is_reset_and_partial_progress_survives_keyboard_interrupt(self) -> None:
+        class InterruptingProvider:
+            name = "replicate"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def configured(self) -> bool:
+                return True
+
+            def available(self) -> bool:
+                return True
+
+            def generate_scene_video(self, *, output_path, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    output_path.write_bytes(b"mp4")
+                    return {"provider": self.name, "created": True, "output": str(output_path), "prompt": kwargs["video_prompt"]}
+                raise KeyboardInterrupt()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            (video_dir / "ai-video-result.json").write_text(
+                json.dumps({"provider": "ltx", "status": "completed", "generated_at": "old", "generated_count": 99}),
+                encoding="utf-8",
+            )
+            provider = InterruptingProvider()
+
+            with patch("shorts_automation.ai_video.select_ai_video_providers", return_value=[provider]):
+                with self.assertRaises(KeyboardInterrupt):
+                    generate_ai_videos_for_package(video_dir, provider_name="replicate", force=True)
+
+            saved = json.loads((video_dir / "ai-video-result.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(saved["status"], "interrupted")
+        self.assertEqual(saved["provider"], "replicate")
+        self.assertEqual(saved["generated_count"], 1)
+        self.assertEqual(saved["real_ai_scene_count"], 1)
+        self.assertNotEqual(saved["generated_count"], 99)
+        self.assertEqual(saved["scenes"][0]["scene_type"], "ai_video")
+
+    def test_replicate_poll_interrupt_persists_prediction_metadata_and_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            scene = {
+                "scene": 1,
+                "video_prompt": "Animated cat discovers the hidden camera.",
+                "image_prompt": "",
+                "narration": "The cat froze when it saw the blinking light.",
+                "negative_prompt": "text, watermark",
+                "duration": 4,
+            }
+            (video_dir / "storyboard.json").write_text(json.dumps([scene], ensure_ascii=False), encoding="utf-8")
+
+            def fake_urlopen(request, timeout=120):
+                if request.full_url.endswith("/v1/predictions"):
+                    return FakeHTTPResponse(
+                        {
+                            "id": "pred-interrupt",
+                            "status": "processing",
+                            "urls": {"get": "https://api.replicate.com/v1/predictions/pred-interrupt"},
+                        }
+                    )
+                raise KeyboardInterrupt()
+
+            with patch.dict(
+                "os.environ",
+                {"REPLICATE_API_TOKEN": "r8_test", "REPLICATE_VIDEO_MODEL": "minimax/video-01", "REPLICATE_POLL_INTERVAL_SECONDS": "0"},
+            ):
+                with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                    with self.assertRaises(KeyboardInterrupt):
+                        generate_ai_videos_for_package(video_dir, provider_name="replicate", force=True)
+
+            saved = json.loads((video_dir / "ai-video-result.json").read_text(encoding="utf-8"))
+
+        attempt = saved["scenes"][0]["fallback_chain"][0]
+        self.assertEqual(saved["status"], "interrupted")
+        self.assertEqual(attempt["prediction_id"], "pred-interrupt")
+        self.assertEqual(attempt["prediction_status"], "processing")
+        self.assertEqual(attempt["status_url"], "https://api.replicate.com/v1/predictions/pred-interrupt")
+        self.assertEqual(attempt["resolved_prompt"], "Animated cat discovers the hidden camera.")
+        self.assertEqual(attempt["request_payload"]["input"]["prompt"], "Animated cat discovers the hidden camera.")
+
+    def test_replicate_poll_handles_429_retry_after_and_records_output_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            storyboard = json.loads((video_dir / "storyboard.json").read_text(encoding="utf-8"))
+            storyboard[0]["video_prompt"] = "A chicken gasps as the cat returns wearing sunglasses."
+            (video_dir / "storyboard.json").write_text(json.dumps([storyboard[0]], ensure_ascii=False), encoding="utf-8")
+            get_calls = 0
+
+            def fake_urlopen(request, timeout=120):
+                nonlocal get_calls
+                if request.full_url.endswith("/v1/predictions"):
+                    return FakeHTTPResponse(
+                        {
+                            "id": "pred-rate",
+                            "status": "processing",
+                            "urls": {"get": "https://api.replicate.com/v1/predictions/pred-rate"},
+                        }
+                    )
+                if request.full_url == "https://api.replicate.com/v1/predictions/pred-rate":
+                    get_calls += 1
+                    if get_calls == 1:
+                        raise urllib.error.HTTPError(
+                            request.full_url,
+                            429,
+                            "Too Many Requests",
+                            {"Retry-After": "0"},
+                            io.BytesIO(b'{"detail":"slow down"}'),
+                        )
+                    return FakeHTTPResponse(
+                        {
+                            "id": "pred-rate",
+                            "status": "succeeded",
+                            "urls": {"get": "https://api.replicate.com/v1/predictions/pred-rate"},
+                            "output": "https://replicate.delivery/output.mp4",
+                        }
+                    )
+                if request.full_url == "https://replicate.delivery/output.mp4":
+                    return FakeHTTPResponse(b"mp4")
+                raise AssertionError(f"Unexpected URL: {request.full_url}")
+
+            with patch.dict(
+                "os.environ",
+                {"REPLICATE_API_TOKEN": "r8_test", "REPLICATE_VIDEO_MODEL": "minimax/video-01", "REPLICATE_POLL_INTERVAL_SECONDS": "0"},
+            ):
+                with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                    with patch("shorts_automation.ai_video.time.sleep") as sleep:
+                        result = generate_ai_videos_for_package(video_dir, provider_name="replicate", force=True)
+
+        self.assertEqual(get_calls, 2)
+        self.assertTrue(sleep.called)
+        self.assertEqual(result["scenes"][0]["prediction_id"], "pred-rate")
+        self.assertEqual(result["scenes"][0]["prediction_status"], "succeeded")
+        self.assertEqual(result["scenes"][0]["output_url"], "https://replicate.delivery/output.mp4")
+        self.assertEqual(result["scenes"][0]["request_payload"]["input"]["prompt"], "A chicken gasps as the cat returns wearing sunglasses.")
+
     def test_v5_default_auto_provider_chain_includes_replicate_before_local_fallbacks(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             providers = [provider.name for provider in select_ai_video_providers("auto")]
