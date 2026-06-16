@@ -93,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     ai_video_parser = subparsers.add_parser("generate-ai-video", help="Generate AI scene videos for one package.")
     ai_video_parser.add_argument("video_dir", help="Video package directory containing storyboard.json.")
     ai_video_parser.add_argument("--ai-video-provider", default=default_ai_video_provider(), choices=ai_video_choices)
+    ai_video_parser.add_argument("--scene", type=int, help="Generate only one storyboard scene, e.g. --scene 1.")
     ai_video_parser.add_argument("--force", action="store_true", help="Regenerate existing scene videos.")
 
     ai_video_all_parser = subparsers.add_parser("generate-ai-video-all", help="Generate AI scene videos for every package in a videos directory.")
@@ -240,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "generate-ai-video":
-        result = generate_ai_videos_for_package(Path(args.video_dir), provider_name=args.ai_video_provider, force=args.force)
+        result = generate_ai_videos_for_package(Path(args.video_dir), provider_name=args.ai_video_provider, force=args.force, scene_number=args.scene)
         print(json.dumps(result, ensure_ascii=False))
         return 0
 

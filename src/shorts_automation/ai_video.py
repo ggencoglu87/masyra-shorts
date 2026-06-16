@@ -537,7 +537,7 @@ def default_ai_video_provider() -> str:
     return os.getenv("AI_VIDEO_PROVIDER_MODE") or os.getenv("AI_VIDEO_PROVIDER", "off")
 
 
-def generate_ai_videos_for_package(video_dir: Path, provider_name: str = "off", force: bool = False) -> dict:
+def generate_ai_videos_for_package(video_dir: Path, provider_name: str = "off", force: bool = False, scene_number: int | None = None) -> dict:
     video_dir = video_dir.resolve()
     storyboard = _read_json(video_dir / "storyboard.json")
     if not isinstance(storyboard, list) or not storyboard:
@@ -553,6 +553,26 @@ def generate_ai_videos_for_package(video_dir: Path, provider_name: str = "off", 
             "ai_movie_ready": False,
             "publish_ready": False,
             "warning": "storyboard.json not found or empty.",
+        }
+        return _write_result(video_dir, result)
+
+    selected_storyboard = _selected_storyboard_items(storyboard, scene_number)
+    if scene_number is not None and not selected_storyboard:
+        result = {
+            "video_dir": str(video_dir),
+            "provider": provider_name,
+            "provider_mode": provider_name,
+            "selected_scene": scene_number,
+            "scene_count": len(storyboard),
+            "generated_count": 0,
+            "real_ai_scene_count": 0,
+            "image_motion_scene_count": 0,
+            "image_only_scene_count": 0,
+            "failed_count": 1,
+            "ai_movie_ready": False,
+            "publish_ready": False,
+            "scenes": [],
+            "warning": f"Scene {scene_number} is outside storyboard range 1-{len(storyboard)}.",
         }
         return _write_result(video_dir, result)
 
@@ -583,14 +603,14 @@ def generate_ai_videos_for_package(video_dir: Path, provider_name: str = "off", 
     scenes = []
     failed = 0
     provider_status = _initial_provider_status(providers)
-    _persist_ai_video_progress(video_dir, provider_name, providers, storyboard, scenes, failed, provider_status, status="running", warning="AI video generation started.")
+    _persist_ai_video_progress(video_dir, provider_name, providers, storyboard, scenes, failed, provider_status, status="running", warning="AI video generation started.", selected_scene=scene_number)
     try:
-        for index, scene in enumerate(storyboard, start=1):
+        for index, scene in selected_storyboard:
             output_path = output_dir / f"scene-{index:02d}.mp4"
             image_path = video_dir / "scene-images" / f"scene-{index:02d}.png"
             if output_path.exists() and not force:
                 scenes.append({"scene": index, "provider": "existing", "created": False, "skipped": True, "file": output_path.relative_to(video_dir).as_posix()})
-                _persist_ai_video_progress(video_dir, provider_name, providers, storyboard, scenes, failed, provider_status, status="running")
+                _persist_ai_video_progress(video_dir, provider_name, providers, storyboard, scenes, failed, provider_status, status="running", selected_scene=scene_number)
                 continue
 
             attempts = []
@@ -648,6 +668,7 @@ def generate_ai_videos_for_package(video_dir: Path, provider_name: str = "off", 
                             provider_status,
                             status="interrupted",
                             warning="Interrupted by user; partial AI video progress was saved.",
+                            selected_scene=scene_number,
                         )
                         raise
                     except KeyboardInterrupt:
@@ -675,7 +696,7 @@ def generate_ai_videos_for_package(video_dir: Path, provider_name: str = "off", 
             else:
                 failed += 1
                 scenes.append({"scene": index, "created": False, "scene_type": "image_only", "fallback_chain": attempts, "warning": "No provider produced an accepted scene video."})
-            _persist_ai_video_progress(video_dir, provider_name, providers, storyboard, scenes, failed, provider_status, status="running")
+            _persist_ai_video_progress(video_dir, provider_name, providers, storyboard, scenes, failed, provider_status, status="running", selected_scene=scene_number)
     except KeyboardInterrupt:
         result = _persist_ai_video_progress(
             video_dir,
@@ -687,11 +708,12 @@ def generate_ai_videos_for_package(video_dir: Path, provider_name: str = "off", 
             provider_status,
             status="interrupted",
             warning="Interrupted by user; partial AI video progress was saved.",
+            selected_scene=scene_number,
         )
         result["interrupted"] = True
         raise
 
-    return _persist_ai_video_progress(video_dir, provider_name, providers, storyboard, scenes, failed, provider_status, status="completed")
+    return _persist_ai_video_progress(video_dir, provider_name, providers, storyboard, scenes, failed, provider_status, status="completed", selected_scene=scene_number)
 
 
 def _persist_ai_video_progress(
@@ -705,9 +727,10 @@ def _persist_ai_video_progress(
     *,
     status: str,
     warning: str | None = None,
+    selected_scene: int | None = None,
 ) -> dict:
     _write_provider_status(video_dir, provider_status)
-    result = _build_ai_video_result(video_dir, provider_name, providers, storyboard, scenes, failed, status=status, warning=warning)
+    result = _build_ai_video_result(video_dir, provider_name, providers, storyboard, scenes, failed, status=status, warning=warning, selected_scene=selected_scene)
     return _write_result(video_dir, result)
 
 
@@ -721,6 +744,7 @@ def _build_ai_video_result(
     *,
     status: str,
     warning: str | None = None,
+    selected_scene: int | None = None,
 ) -> dict:
     generated_count = len([scene for scene in scenes if scene.get("file") and (video_dir / scene["file"]).exists()])
     real_ai_scene_count = len([scene for scene in scenes if scene.get("scene_type") == "ai_video" and scene.get("file") and (video_dir / scene["file"]).exists()])
@@ -737,6 +761,7 @@ def _build_ai_video_result(
         "provider": scenes[0].get("provider", providers[0].name) if scenes else providers[0].name,
         "provider_mode": provider_name,
         "provider_priority": [provider.name for provider in providers],
+        "selected_scene": selected_scene,
         "scene_count": len(storyboard),
         "generated_count": generated_count,
         "real_ai_scene_count": real_ai_scene_count,
@@ -973,6 +998,14 @@ def _bounded_duration(value: object) -> int:
     except (TypeError, ValueError):
         duration = 4
     return max(2, min(duration, 8))
+
+
+def _selected_storyboard_items(storyboard: list[dict], scene_number: int | None) -> list[tuple[int, dict]]:
+    if scene_number is None:
+        return list(enumerate(storyboard, start=1))
+    if scene_number < 1 or scene_number > len(storyboard):
+        return []
+    return [(scene_number, storyboard[scene_number - 1])]
 
 
 def _scene_prompt(scene: dict, scene_id: int) -> str:

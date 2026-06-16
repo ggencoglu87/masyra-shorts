@@ -14,6 +14,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from shorts_automation.ai_video import generate_ai_videos_for_package, select_ai_video_providers  # noqa: E402
+from shorts_automation.cli import main as cli_main  # noqa: E402
 from shorts_automation.dashboard import build_package_rows  # noqa: E402
 from shorts_automation.planner import build_daily_network_plan, write_video_packages  # noqa: E402
 from shorts_automation.quality import score_video_package  # noqa: E402
@@ -488,6 +489,83 @@ class AIMovieEngineV4Tests(unittest.TestCase):
         self.assertEqual(result["scenes"][0]["prediction_status"], "succeeded")
         self.assertEqual(result["scenes"][0]["output_url"], "https://replicate.delivery/output.mp4")
         self.assertEqual(result["scenes"][0]["request_payload"]["input"]["prompt"], "A chicken gasps as the cat returns wearing sunglasses.")
+
+    def test_generate_ai_video_can_limit_generation_to_one_scene(self) -> None:
+        class CountingProvider:
+            name = "replicate"
+
+            def __init__(self) -> None:
+                self.scene_ids = []
+
+            def configured(self) -> bool:
+                return True
+
+            def available(self) -> bool:
+                return True
+
+            def generate_scene_video(self, *, scene_id, output_path, **kwargs):
+                self.scene_ids.append(scene_id)
+                output_path.write_bytes(f"scene-{scene_id}".encode("utf-8"))
+                return {"provider": self.name, "created": True, "output": str(output_path), "prompt": kwargs["video_prompt"]}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            provider = CountingProvider()
+
+            with patch("shorts_automation.ai_video.select_ai_video_providers", return_value=[provider]):
+                result = generate_ai_videos_for_package(video_dir, provider_name="replicate", force=True, scene_number=3)
+
+            scene_dir = video_dir / "scene-videos"
+            saved = json.loads((video_dir / "ai-video-result.json").read_text(encoding="utf-8"))
+            scene_exists = {index: (scene_dir / f"scene-{index:02d}.mp4").exists() for index in range(1, 6)}
+
+        self.assertEqual(provider.scene_ids, [3])
+        self.assertEqual(result["selected_scene"], 3)
+        self.assertEqual(result["scene_count"], 5)
+        self.assertEqual(result["generated_count"], 1)
+        self.assertEqual(result["real_ai_scene_count"], 1)
+        self.assertEqual(result["scenes"][0]["scene"], 3)
+        self.assertEqual(saved["selected_scene"], 3)
+        self.assertFalse(scene_exists[1])
+        self.assertFalse(scene_exists[2])
+        self.assertTrue(scene_exists[3])
+        self.assertFalse(scene_exists[4])
+        self.assertFalse(scene_exists[5])
+
+    def test_generate_ai_video_scene_flag_is_passed_from_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = Path(tmp) / "package"
+            video_dir.mkdir()
+
+            with patch("shorts_automation.cli.generate_ai_videos_for_package", return_value={"ok": True}) as generate:
+                exit_code = cli_main(["generate-ai-video", str(video_dir), "--ai-video-provider", "replicate", "--scene", "1", "--force"])
+
+        self.assertEqual(exit_code, 0)
+        generate.assert_called_once_with(video_dir, provider_name="replicate", force=True, scene_number=1)
+
+    def test_generate_ai_video_scene_out_of_range_does_not_call_provider(self) -> None:
+        class Provider:
+            name = "replicate"
+
+            def configured(self) -> bool:
+                return True
+
+            def available(self) -> bool:
+                return True
+
+            def generate_scene_video(self, **kwargs):
+                raise AssertionError("Provider should not be called for an out-of-range scene.")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+
+            with patch("shorts_automation.ai_video.select_ai_video_providers", return_value=[Provider()]):
+                result = generate_ai_videos_for_package(video_dir, provider_name="replicate", force=True, scene_number=99)
+
+        self.assertEqual(result["selected_scene"], 99)
+        self.assertEqual(result["generated_count"], 0)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertIn("outside storyboard range", result["warning"])
 
     def test_v5_default_auto_provider_chain_includes_replicate_before_local_fallbacks(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
