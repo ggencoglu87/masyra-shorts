@@ -66,9 +66,11 @@ class AIMovieEngineV4Tests(unittest.TestCase):
         ids = [character["id"] for character in bible["characters"]]
         self.assertEqual(ids, ["bob_cat", "carl_chicken"])
         self.assertTrue(all(character.get("appearance_hash") for character in bible["characters"]))
-        self.assertEqual(bible["universe"]["id"], "funny_animals")
+        self.assertEqual(bible["universe"]["id"], "farm_chaos")
         self.assertTrue(all(character.get("voice") for character in bible["characters"]))
-        self.assertTrue(all(character.get("universe") == "funny_animals" for character in bible["characters"]))
+        self.assertTrue(all(character.get("universe") == "farm_chaos" for character in bible["characters"]))
+        self.assertTrue(all(character.get("relationships") for character in bible["characters"]))
+        self.assertTrue(all(character.get("history") for character in bible["characters"]))
 
     def test_global_character_library_and_episode_memory_are_written(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -78,10 +80,12 @@ class AIMovieEngineV4Tests(unittest.TestCase):
             memory = json.loads((root / "studio" / "episode-memory.json").read_text(encoding="utf-8"))
 
         self.assertIn("bob_cat", library["characters"])
-        self.assertEqual(library["characters"]["bob_cat"]["universe"], "funny_animals")
+        self.assertEqual(library["characters"]["bob_cat"]["universe"], "farm_chaos")
         self.assertEqual(library["characters"]["bob_cat"]["appearance"], "orange tabby cat, green eyes, red baseball cap, small scar on left ear")
-        self.assertEqual(memory["episodes"][0]["universe"], "funny_animals")
-        self.assertIn("funny_animals", memory["universes"])
+        self.assertEqual(memory["episodes"][0]["universe"], "farm_chaos")
+        self.assertIn("farm_chaos", memory["universes"])
+        self.assertIn("relationships", library["characters"]["bob_cat"])
+        self.assertIn("history", library["characters"]["bob_cat"])
 
     def test_storyboard_prompts_include_exact_character_appearance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -92,6 +96,9 @@ class AIMovieEngineV4Tests(unittest.TestCase):
         self.assertIn("orange tabby cat, green eyes, red baseball cap", prompt)
         self.assertIn("white chicken, blue scarf", prompt)
         self.assertIn("bob_cat", storyboard[0]["characters"])
+        self.assertIn("Environment:", storyboard[0]["video_prompt"])
+        self.assertIn("Camera direction:", storyboard[0]["video_prompt"])
+        self.assertIn("Minimax video", storyboard[0]["video_prompt"])
 
     def test_forbidden_phrases_never_appear_in_script(self) -> None:
         forbidden = [
@@ -174,7 +181,7 @@ class AIMovieEngineV4Tests(unittest.TestCase):
             video_dir = self._package(Path(tmp))
             image_dir = video_dir / "scene-images"
             image_dir.mkdir()
-            for index in range(1, 6):
+            for index in range(1, 5):
                 (image_dir / f"scene-{index:02d}.png").write_bytes(b"fake-png")
 
             requests = []
@@ -211,8 +218,8 @@ class AIMovieEngineV4Tests(unittest.TestCase):
                     result = generate_ai_videos_for_package(video_dir, provider_name="replicate", force=True)
 
             self.assertEqual(result["provider"], "replicate")
-            self.assertEqual(result["generated_count"], 5)
-            self.assertEqual(result["real_ai_scene_count"], 5)
+            self.assertEqual(result["generated_count"], 4)
+            self.assertEqual(result["real_ai_scene_count"], 4)
             self.assertEqual(result["image_motion_scene_count"], 0)
             self.assertEqual(result["failed_count"], 0)
             self.assertTrue(result["ai_movie_ready"])
@@ -517,11 +524,11 @@ class AIMovieEngineV4Tests(unittest.TestCase):
 
             scene_dir = video_dir / "scene-videos"
             saved = json.loads((video_dir / "ai-video-result.json").read_text(encoding="utf-8"))
-            scene_exists = {index: (scene_dir / f"scene-{index:02d}.mp4").exists() for index in range(1, 6)}
+            scene_exists = {index: (scene_dir / f"scene-{index:02d}.mp4").exists() for index in range(1, 5)}
 
         self.assertEqual(provider.scene_ids, [3])
         self.assertEqual(result["selected_scene"], 3)
-        self.assertEqual(result["scene_count"], 5)
+        self.assertEqual(result["scene_count"], 4)
         self.assertEqual(result["generated_count"], 1)
         self.assertEqual(result["real_ai_scene_count"], 1)
         self.assertEqual(result["scenes"][0]["scene"], 3)
@@ -530,7 +537,6 @@ class AIMovieEngineV4Tests(unittest.TestCase):
         self.assertFalse(scene_exists[2])
         self.assertTrue(scene_exists[3])
         self.assertFalse(scene_exists[4])
-        self.assertFalse(scene_exists[5])
 
     def test_generate_ai_video_scene_flag_is_passed_from_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -597,7 +603,7 @@ class AIMovieEngineV4Tests(unittest.TestCase):
             video_dir = self._package(Path(tmp))
             image_dir = video_dir / "scene-images"
             image_dir.mkdir()
-            for index in range(1, 6):
+            for index in range(1, 5):
                 (image_dir / f"scene-{index:02d}.png").write_bytes(b"fake-png")
 
             def fake_run(command, capture_output=True, text=True, timeout=90):
@@ -611,14 +617,14 @@ class AIMovieEngineV4Tests(unittest.TestCase):
 
             status = json.loads((video_dir / "providers-status.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(result["generated_count"], 5)
+        self.assertEqual(result["generated_count"], 4)
         self.assertEqual(result["real_ai_scene_count"], 0)
-        self.assertEqual(result["image_motion_scene_count"], 5)
+        self.assertEqual(result["image_motion_scene_count"], 4)
         self.assertFalse(result["ai_movie_ready"])
         self.assertEqual(result["scenes"][0]["provider"], fallback_provider)
         self.assertEqual(result["scenes"][0]["scene_type"], "image_motion")
         self.assertEqual(status["providers"]["replicate"]["configured"], False)
-        self.assertEqual(status["providers"][fallback_provider]["success_count"], 5)
+        self.assertEqual(status["providers"][fallback_provider]["success_count"], 4)
         self.assertNotIn("image_path", json.dumps(result))
 
     def test_v5_auto_provider_chain_falls_back_and_writes_provider_status(self) -> None:
@@ -626,7 +632,7 @@ class AIMovieEngineV4Tests(unittest.TestCase):
             video_dir = self._package(Path(tmp))
             image_dir = video_dir / "scene-images"
             image_dir.mkdir()
-            for index in range(1, 6):
+            for index in range(1, 5):
                 (image_dir / f"scene-{index:02d}.png").write_bytes(b"fake-png")
 
             def fake_urlopen(request, timeout=120):
@@ -652,14 +658,14 @@ class AIMovieEngineV4Tests(unittest.TestCase):
 
         self.assertEqual(result["provider_priority"][:3], ["veo3", "runway", "replicate"])
         self.assertTrue(result["ai_movie_ready"])
-        self.assertEqual(result["generated_count"], 5)
-        self.assertEqual(result["real_ai_scene_count"], 5)
+        self.assertEqual(result["generated_count"], 4)
+        self.assertEqual(result["real_ai_scene_count"], 4)
         self.assertEqual(result["image_motion_scene_count"], 0)
         first_scene_chain = [attempt["provider"] for attempt in result["scenes"][0]["fallback_chain"]]
         self.assertEqual(first_scene_chain, ["veo3", "runway", "replicate"])
-        self.assertEqual(status["providers"]["veo3"]["failure_count"], 5)
-        self.assertEqual(status["providers"]["runway"]["failure_count"], 5)
-        self.assertEqual(status["providers"]["replicate"]["success_count"], 5)
+        self.assertEqual(status["providers"]["veo3"]["failure_count"], 4)
+        self.assertEqual(status["providers"]["runway"]["failure_count"], 4)
+        self.assertEqual(status["providers"]["replicate"]["success_count"], 4)
 
     def test_quality_rejects_stock_only_as_full_ai_movie(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

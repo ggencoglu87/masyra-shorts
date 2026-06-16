@@ -79,8 +79,8 @@ def build_daily_network_plan(trends: list[dict], channel_name: str, top_n: int =
 def make_content_item(trend: dict, rank: int, channel_name: str) -> dict:
     topic = normalize_topic(trend["title"])
     category = normalize_viral_category(trend["category"], topic)
-    story = build_story(topic, category)
     character_bible = build_character_bible(category)
+    story = build_story(topic, category, character_bible)
     title = make_title(story["hook"], category)
     script = make_script(story, category)
     narration = make_narration(story, category)
@@ -115,7 +115,9 @@ def make_content_item(trend: dict, rank: int, channel_name: str) -> dict:
         "trend_intelligence": explain_trend({**trend, "category": category}),
         "content_strategy": {
             "hook": story["hook"],
-            "story_structure": "hook -> curiosity -> escalation -> twist -> payoff",
+            "story_structure": "hook -> conflict -> escalation -> payoff",
+            "episode_premise": story["episode_premise"],
+            "series_goal": "episodic AI animated short with recurring characters and universe memory",
             "retention_plan": [
                 "Open with a curiosity trigger in the first 3 seconds.",
                 "Introduce conflict before second 10.",
@@ -251,16 +253,15 @@ def make_script(story: dict, category: str) -> str:
     return "\n".join(
         [
             f"0-3s HOOK: {story['hook']}",
-            f"3-10s CURIOSITY: {story['curiosity']}",
+            f"3-10s CONFLICT: {story['conflict']}",
             f"10-20s ESCALATION: {story['escalation']}",
-            f"20-26s TWIST: {story['twist']}",
-            f"26-30s PAYOFF: {story['payoff']}",
+            f"20-30s PAYOFF: {story['payoff']}",
         ]
     )
 
 
 def make_narration(story: dict, category: str) -> str:
-    return " ".join([story["hook"], story["curiosity"], story["escalation"], story["twist"], story["payoff"], story["cta"]])
+    return " ".join([story["hook"], story["conflict"], story["escalation"], story["payoff"], story["cta"]])
 
 
 def make_subtitles(narration: str) -> str:
@@ -286,6 +287,7 @@ def make_render_brief(item: dict) -> str:
         [
             "Render target: 1080x1920, 30fps, 20-45 seconds.",
             f"Category: {item['trend']['category']}",
+            f"Universe: {item['universe'].get('name', '')}",
             f"Channel target: {item['channel_target']}",
             f"Voice style: {item['voice_profile']['style']}",
             f"Visual style: {item['production']['visual_style']}",
@@ -343,28 +345,55 @@ def visual_style_for_category(category: str) -> str:
     return styles.get(category, styles["Reddit Stories"])
 
 
-def build_story(topic: str, category: str) -> dict:
+def build_story(topic: str, category: str, character_bible: dict | None = None) -> dict:
+    universe = (character_bible or build_character_bible(category)).get("universe", {})
+    universe_id = universe.get("id", "")
     templates = {
-        "Funny Animals": ("Nobody expected this animal to fight back.", "A tiny pet got blamed for the mess.", "Then the camera caught the real troublemaker.", "The guilty one tried to act normal.", "But the evidence was literally stuck to its face.", "Would your pet get away with this?"),
-        "Funny Kids": ("This kid had one job.", "Everyone thought the answer would be simple.", "Then the explanation got way too confident.", "The room went silent for one second.", "And somehow the kid was technically right.", "Would you have laughed or given full credit?"),
-        "Funny Fails": ("Watch what happens next.", "The plan looked perfect for about two seconds.", "Then one tiny mistake changed everything.", "Everybody froze before the crash.", "The recovery was funnier than the fail.", "Would you try this again?"),
-        "Horror Stories": ("Nobody believed the knocking was real.", "A boy heard it every night at 3 AM.", "Then he finally checked the camera.", "The hallway was empty, but the door moved.", "The knock came from inside the room.", "Would you watch the rest of the footage?"),
-        "Reddit Stories": ("I thought my roommate was harmless.", "Then food started disappearing every night.", "I set up one small trap.", "The next morning, the note on the fridge was gone.", "But my camera caught who wrote it.", "What would you do next?"),
-        "Sports Drama": ("The game looked completely over.", "They were down by 30 and the crowd was leaving.", "Then the bench player asked for one chance.", "The first shot went in, then the second.", "By the final buzzer, nobody was sitting down.", "Best comeback or pure luck?"),
-        "Relationship Stories": ("She found one text that changed everything.", "At first it looked like a normal reminder.", "Then she noticed the contact name was fake.", "He said it was a joke, but the timing made no sense.", "So she replied from his phone.", "Would you forgive this?"),
-        "Minecraft Stories": ("My friend told me not to dig down.", "I did it anyway because the cave sounded empty.", "Then my torch went out.", "Something moved behind the diamonds.", "The base was never ours.", "Would you log out or keep mining?"),
-        "Motivational Stories": ("Everyone counted him out.", "He failed the same test three times.", "On the fourth try, he stopped trying to look talented.", "He practiced the boring part every single day.", "Six months later, they asked how he got lucky.", "What would you start today?"),
-        "Celebrity Drama": ("One red carpet reaction said everything.", "The smile lasted half a second too long.", "Then another celebrity looked away.", "Fans replayed the clip until they found the moment.", "The real drama was not what anyone expected.", "Did you catch it the first time?"),
-        "Survival Stories": ("He had ten seconds to choose.", "The trail disappeared under fresh snow.", "His phone had one percent battery.", "Then he saw footprints going the wrong direction.", "Following them saved his life.", "Would you have followed them?"),
-        "Crazy Facts": ("This sounds fake, but it is real.", "There is an animal that can survive something impossible.", "Scientists tested it again and again.", "The weirdest part is what wakes it back up.", "It basically hits pause on life.", "What fact should we do next?"),
+        "farm_chaos": (
+            "Bob promised he was done causing trouble.",
+            "Then Carl found muddy paw prints leading straight to the prize pie.",
+            "Bob tried to hide the evidence, but every farm animal started following the smell.",
+            "The pie was safe the whole time, because Carl had hidden it from Bob first.",
+            "Would Carl survive one day without making Bob look guilty?",
+        ),
+        "forest_legends": (
+            "Willow heard the forest whisper her name.",
+            "Bramble begged her not to follow the glowing footprints past the old stone gate.",
+            "The footprints split into two trails, and one trail copied Willow's voice perfectly.",
+            "The voice was a scared baby moon-moth trying to find its way home.",
+            "Would you follow the voice or run back?",
+        ),
+        "space_academy": (
+            "Nova had thirty seconds before the simulator exploded.",
+            "Zip said the rules were clear: never touch the red gravity switch.",
+            "Nova touched it anyway, and the whole academy cafeteria floated into orbit.",
+            "The switch saved everyone, but Zip had already filed a panic report.",
+            "Would Nova get detention or a medal?",
+        ),
+        "funny_pets": (
+            "Pixel swore he did not eat the missing sandwich.",
+            "Miso noticed one tiny crumb stuck to Pixel's green bow tie.",
+            "Pixel staged a fake investigation, but every clue pointed back to his nap bed.",
+            "Miso had eaten the sandwich too, and only framed Pixel to make him confess first.",
+            "Which pet would you trust?",
+        ),
+        "monster_school": (
+            "Milo heard knocking from the locker nobody opens.",
+            "Nora dared him to answer before the bell rang.",
+            "The locker whispered Milo's homework answers in his own voice.",
+            "Inside was a tiny scared echo monster asking to join class.",
+            "Would you open the locker?",
+        ),
     }
-    hook, curiosity, escalation, twist, payoff, cta = templates[category]
+    hook, conflict, escalation, payoff, cta = templates.get(universe_id, templates["space_academy"])
     return {
         "topic_seed": topic,
+        "universe": universe,
+        "episode_premise": f"{universe.get('name', 'Animated Universe')} episode inspired by: {topic}",
         "hook": hook,
-        "curiosity": curiosity,
+        "conflict": conflict,
+        "curiosity": conflict,
         "escalation": escalation,
-        "twist": twist,
         "payoff": payoff,
         "cta": cta,
     }
@@ -373,19 +402,24 @@ def build_story(topic: str, category: str) -> dict:
 def make_storyboard(story: dict, category: str, character_bible: dict) -> list[dict]:
     labels = [
         ("Hook", "0-3s", 3, story["hook"], "slow push-in, cinematic close-up", "shock and curiosity"),
-        ("Conflict", "3-8s", 5, story["curiosity"], "side tracking shot, expressive reaction", "accusation and tension"),
-        ("Escalation", "8-16s", 8, story["escalation"], "handheld animated camera, quick reveal", "panic and surprise"),
-        ("Twist", "16-24s", 8, story["twist"], "dramatic low angle, fast character motion", "comic reversal"),
-        ("Payoff", "24-30s", 6, story["payoff"], "wide shot into punchline close-up", "funny payoff"),
+        ("Conflict", "3-10s", 7, story["conflict"], "side tracking shot, expressive reaction", "accusation and tension"),
+        ("Escalation", "10-20s", 10, story["escalation"], "dynamic handheld animated camera, quick reveal, foreground character reaction", "panic and surprise"),
+        ("Payoff", "20-30s", 10, story["payoff"], "wide shot into punchline close-up, clean final pose", "comic reversal and emotional payoff"),
     ]
     character_ids = [character["id"] for character in character_bible.get("characters", [])]
     character_text = character_prompt_text(character_bible)
+    universe = character_bible.get("universe", {})
+    environment = universe.get("environment", "stylized cinematic animated set")
     scenes = []
     for index, (beat, time_range, duration, text, camera, emotion) in enumerate(labels, start=1):
         visual_action = visual_prompt_for_scene(category, text)
-        prompt_base = (
-            f"{visual_action}. Characters: {character_text}. "
-            f"Style: {character_bible.get('style', '')}. Same character design, same clothing, same proportions, cinematic 9:16."
+        prompt_base = _minimax_scene_prompt(
+            visual_action=visual_action,
+            character_text=character_text,
+            environment=environment,
+            camera=camera,
+            emotion=emotion,
+            style=character_bible.get("style", ""),
         )
         scenes.append(
             {
@@ -398,15 +432,26 @@ def make_storyboard(story: dict, category: str, character_bible: dict) -> list[d
                 "visual_action": visual_action,
                 "camera": camera,
                 "emotion": emotion,
+                "emotional_state": emotion,
+                "environment": environment,
                 "characters": character_ids,
                 "visual_prompt": visual_action,
                 "image_prompt": prompt_base,
-                "video_prompt": f"{prompt_base} Smooth animated motion, expressive faces, cinematic lighting, no text.",
+                "video_prompt": f"{prompt_base} Minimax video: smooth character animation, clear body motion, expressive faces, stable identity, cinematic lighting, no text.",
                 "negative_prompt": "low quality, blurry, inconsistent character, extra limbs, deformed face, text, watermark, logo, different outfit, different species",
                 "search_queries": scene_search_queries(category, text),
             }
         )
     return scenes
+
+
+def _minimax_scene_prompt(*, visual_action: str, character_text: str, environment: str, camera: str, emotion: str, style: str) -> str:
+    return (
+        f"{visual_action}. Environment: {environment}. Characters with exact recurring design and personality: {character_text}. "
+        f"Emotional state: {emotion}. Camera direction: {camera}. "
+        f"Style: {style}. Keep identical face shape, clothing, colors, species, proportions, and accessories across every scene. "
+        "Vertical 9:16 animated short film frame, readable silhouettes, no captions or on-screen text."
+    )
 
 
 def visual_prompt_for_scene(category: str, text: str) -> str:

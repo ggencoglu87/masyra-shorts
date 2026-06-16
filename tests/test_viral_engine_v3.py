@@ -33,7 +33,8 @@ class ViralEngineV3Tests(unittest.TestCase):
         self.assertIn("shareability_score", item["scores"])
         self.assertIn("completion_probability", item["scores"])
         self.assertNotIn("This trend is moving fast", item["narration"])
-        self.assertEqual(len(item["storyboard"]), 5)
+        self.assertEqual(item["universe"]["name"], "Farm Chaos")
+        self.assertEqual(len(item["storyboard"]), 4)
         self.assertEqual(item["storyboard"][0]["beat"], "Hook")
         self.assertIn("cat reaction", json.dumps(item["storyboard"]))
 
@@ -60,6 +61,41 @@ class ViralEngineV3Tests(unittest.TestCase):
         self.assertTrue(captions[0]["word"].isupper())
         self.assertEqual(video_plan["voice_profile"]["style"], "slow and suspenseful")
         self.assertEqual(video_plan["channel_target"], "horror")
+
+    def test_v7_story_universe_prompts_and_memory_are_episode_ready(self) -> None:
+        trend = {
+            "title": "Space school simulator goes wrong",
+            "category": "Sports Drama",
+            "sources": ["sample"],
+            "youtube_views": 900_000,
+            "youtube_likes": 90_000,
+            "reddit_ups": 18_000,
+            "youtube_search_results": 16,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output_root = root / "run"
+            plan = build_daily_network_plan([trend], channel_name="Masyra Labs", top_n=1)
+            write_video_packages(plan, output_root)
+            video_dir = next((output_root / "videos").iterdir())
+            storyboard = json.loads((video_dir / "storyboard.json").read_text(encoding="utf-8"))
+            bible = json.loads((video_dir / "character_bible.json").read_text(encoding="utf-8"))
+            library = json.loads((root / "studio" / "character-library.json").read_text(encoding="utf-8"))
+            memory = json.loads((root / "studio" / "episode-memory.json").read_text(encoding="utf-8"))
+
+        prompt = storyboard[0]["video_prompt"]
+        self.assertEqual(bible["universe"]["name"], "Space Academy")
+        self.assertEqual([scene["beat"] for scene in storyboard], ["Hook", "Conflict", "Escalation", "Payoff"])
+        self.assertIn("Environment:", prompt)
+        self.assertIn("Emotional state:", prompt)
+        self.assertIn("Camera direction:", prompt)
+        self.assertIn("Minimax video", prompt)
+        self.assertIn("personality", prompt)
+        self.assertIn("nova_cadet", library["characters"])
+        self.assertIn("relationships", library["characters"]["nova_cadet"])
+        self.assertTrue(library["characters"]["nova_cadet"]["history"])
+        self.assertEqual(memory["episodes"][0]["universe"], "space_academy")
+        self.assertIn("payoff", memory["episodes"][0])
 
     def test_scoring_exposes_v3_viral_metrics(self) -> None:
         scores = score_trend(
