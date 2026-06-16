@@ -51,9 +51,10 @@ class DashboardStatusTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (video_dir / "tts-result.json").write_text(
-                json.dumps({"requested_provider": "elevenlabs", "provider_used": "piper", "audio_matches_current_text": True}),
+                json.dumps({"requested_provider": "elevenlabs", "provider_used": "piper", "audio_matches_current_text": True, "mixed_voiceover_ready": True}),
                 encoding="utf-8",
             )
+            (video_dir / "voiceover.mp3").write_bytes(b"audio")
 
             store = StatusStore(output_dir / "review-status.json")
             rows = build_package_rows(output_dir, store)

@@ -111,6 +111,53 @@ class TTSPipelineTests(unittest.TestCase):
         self.assertEqual(result["fallback_attempts"][0]["provider"], "elevenlabs")
         self.assertEqual(result["fallback_attempts"][1]["provider"], "piper")
 
+    def test_multi_voice_dialogue_generates_speaker_clips_and_mixed_voiceover(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = Path(tmp) / "video"
+            video_dir.mkdir()
+            (video_dir / "voiceover.txt").write_text(
+                "\n".join(
+                    [
+                        "NARRATOR: Bob thought nobody saw him.",
+                        "BOB_CAT: I can explain.",
+                        "CARL_CHICKEN: Then explain the fish on your face.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (video_dir / "character_bible.json").write_text(
+                json.dumps(
+                    {
+                        "narrator_voice_profile": {"voice_id": "narrator_main", "provider": "mock"},
+                        "characters": [
+                            {"id": "bob_cat", "voice_profile": {"voice_id": "bob_cat", "speaking_style": "dramatic"}},
+                            {"id": "carl_chicken", "voice_profile": {"voice_id": "carl_chicken", "speaking_style": "sarcastic"}},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("shorts_automation.tts.get_tts_fallback_chain", return_value=[FakeTTSProvider()]):
+                result = synthesize_voiceover(video_dir, provider_name="mock")
+            files_exist = {
+                "narrator": (video_dir / "audio" / "narrator-01.mp3").exists(),
+                "bob": (video_dir / "audio" / "bob_cat-01.mp3").exists(),
+                "carl": (video_dir / "audio" / "carl_chicken-01.mp3").exists(),
+                "mixed": (video_dir / "voiceover.mp3").exists(),
+            }
+
+        self.assertTrue(result["created"])
+        self.assertEqual(result["voice_mode"], "multi_character")
+        self.assertTrue(result["narrator_ready"])
+        self.assertTrue(result["character_voices_ready"])
+        self.assertTrue(result["mixed_voiceover_ready"])
+        self.assertTrue(files_exist["narrator"])
+        self.assertTrue(files_exist["bob"])
+        self.assertTrue(files_exist["carl"])
+        self.assertTrue(files_exist["mixed"])
+        self.assertIn("bob_cat", result["voices_used"])
+
 
 if __name__ == "__main__":
     unittest.main()

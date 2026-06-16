@@ -495,7 +495,7 @@ def dashboard_asset_status(video_dir: Path) -> dict:
     clips_ready = real_clip_count >= 3 and final_exists
     real_openai_visuals_ready = bool(visual_result.get("real_visuals_ready"))
     placeholder_visuals = _placeholder_visuals(scene_manifest, visual_result)
-    audio_ready = bool(tts_result.get("audio_matches_current_text"))
+    audio_ready = bool(tts_result.get("audio_matches_current_text") and tts_result.get("mixed_voiceover_ready", (video_dir / "voiceover.mp3").exists()))
     provider_used = tts_result.get("provider_used") or tts_result.get("provider")
     ai_movie_ready = bool(
         ai_videos_ready
@@ -528,6 +528,11 @@ def dashboard_asset_status(video_dir: Path) -> dict:
         "video_publish_ready": bool(clip_result.get("publish_ready")),
         "audio_ready": audio_ready,
         "audio_provider": provider_used or "not generated",
+        "voice_mode": tts_result.get("voice_mode", "single"),
+        "voices_used": tts_result.get("voices_used", []),
+        "narrator_ready": bool(tts_result.get("narrator_ready", audio_ready)),
+        "character_voices_ready": bool(tts_result.get("character_voices_ready", audio_ready)),
+        "mixed_voiceover_ready": bool(tts_result.get("mixed_voiceover_ready", audio_ready)),
         "audio_generation_time": tts_result.get("generation_time"),
         "requested_audio_provider": tts_result.get("requested_provider") or tts_result.get("provider", "not generated"),
         "real_openai_visuals_ready": real_openai_visuals_ready,
@@ -625,6 +630,11 @@ def asset_status_section(status: dict) -> str:
       {score_box("Real Clips", status.get("real_clip_count", 0))}
       {score_box("Video Provider", status.get("video_provider", ""))}
       {score_box("Audio Provider", status.get("audio_provider", ""))}
+      {score_box("Voice Mode", status.get("voice_mode", "single"))}
+      {score_box("Voices Used", ", ".join(status.get("voices_used", [])) or "missing")}
+      {score_box("Narrator Ready", "Yes" if status.get("narrator_ready") else "No")}
+      {score_box("Character Voices", "Yes" if status.get("character_voices_ready") else "No")}
+      {score_box("Mixed Voiceover", "Yes" if status.get("mixed_voiceover_ready") else "No")}
       {score_box("Voice Gen Time", status.get("audio_generation_time", "missing"))}
       {score_box("Publish Ready", "Yes" if status.get("publish_ready") else "No")}
     </section>
@@ -682,6 +692,7 @@ def character_bible_section(bible: object) -> str:
                 </div>
                 <p><strong>{_e(character.get("name", ""))}</strong></p>
                 <p>{_e(character.get("visual_description", character.get("appearance", "")))}</p>
+                <p>voice: {_e((character.get("voice_profile") or {}).get("speaking_style", character.get("voice", "")))}</p>
                 <p>hash: {_e(character.get("appearance_hash", ""))}</p>
               </div>
             </article>
@@ -747,12 +758,23 @@ def storyboard_section(storyboard: object) -> str:
                   <span>{_e(scene.get("time", ""))}</span>
                 </div>
                 <p><strong>{_e(scene.get("caption", ""))}</strong></p>
+                <p>{_e(_dialogue_preview(scene.get("dialogue", [])))}</p>
                 <p>{_e(", ".join(scene.get("search_queries", [])))}</p>
               </div>
             </article>
             """
         )
     return f'<section class="timeline-section"><h2>Storyboard</h2><div class="timeline-grid">{"".join(cards)}</div></section>'
+
+
+def _dialogue_preview(dialogue: object) -> str:
+    if not isinstance(dialogue, list):
+        return ""
+    return " | ".join(
+        f"{str(line.get('speaker_id', '')).upper()}: {line.get('line', '')}"
+        for line in dialogue
+        if isinstance(line, dict) and line.get("line")
+    )
 
 
 def captions_section(captions: object) -> str:
@@ -786,6 +808,12 @@ def tts_integrity_section(status: dict) -> str:
         <dd>{_e(status.get("requested_provider") or "missing")}</dd>
         <dt>Actual provider used</dt>
         <dd>{_e(status.get("provider_used") or "missing")}</dd>
+        <dt>Voice mode</dt>
+        <dd>{_e(status.get("voice_mode") or "single")}</dd>
+        <dt>Voices used</dt>
+        <dd>{_e(", ".join(status.get("voices_used", [])) or "missing")}</dd>
+        <dt>Mixed voiceover</dt>
+        <dd>{_e("ready" if status.get("mixed_voiceover_ready") else "missing")}</dd>
         <dt>Current source hash</dt>
         <dd>{_e(status.get("source_text_hash") or "missing")}</dd>
         <dt>Recorded source hash</dt>

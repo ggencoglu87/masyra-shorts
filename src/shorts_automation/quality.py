@@ -17,7 +17,10 @@ def score_video_package(video_dir: Path) -> dict:
     plan = _read_json(video_dir / "video-plan.json")
     scores = plan.get("scores", {})
     script = (video_dir / "script.txt").read_text(encoding="utf-8") if (video_dir / "script.txt").exists() else ""
+    tts_result = _read_json(video_dir / "tts-result.json")
     has_audio = (video_dir / "voiceover.mp3").exists()
+    has_mixed_audio = bool(has_audio and (tts_result.get("mixed_voiceover_ready", has_audio)) and tts_result.get("audio_matches_current_text", has_audio))
+    has_captions = (video_dir / "captions.json").exists() and bool(_read_json(video_dir / "captions.json"))
     has_final = (video_dir / "final.mp4").exists()
     has_preview = (video_dir / "preview.mp4").exists()
     has_clips = video_clips_available(video_dir)
@@ -42,11 +45,11 @@ def score_video_package(video_dir: Path) -> dict:
     completion_probability = float(scores.get("completion_probability", 0) or 0)
     rewatch_probability = float(scores.get("rewatch_probability", 0) or 0)
     visual_score = 92 if has_clips else 72 if visual_result.get("real_visuals_ready") else 48 if has_visuals else 10
-    audio_score = 88 if has_audio else 25
+    audio_score = 92 if has_mixed_audio else 88 if has_audio else 25
     retention_score = min(100, round((completion_probability * 0.45) + (visual_score * 0.25) + (audio_score * 0.2) + (10 if has_preview else 0), 2))
     viral_score = float(scores.get("viral_score") or scores.get("viral_potential_score", 0))
     publish_score = round((retention_score * 0.32) + (viral_score * 0.28) + (hook_score * 0.18) + (visual_score * 0.14) + (audio_score * 0.08), 2)
-    publish_ready = publish_score >= PUBLISH_THRESHOLD and has_final and has_audio and ai_movie_ready
+    publish_ready = publish_score >= PUBLISH_THRESHOLD and has_final and has_mixed_audio and has_captions and ai_movie_ready
 
     result = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -73,6 +76,8 @@ def score_video_package(video_dir: Path) -> dict:
             "final_mp4": has_final,
             "preview_mp4": has_preview,
             "voiceover_mp3": has_audio,
+            "mixed_voiceover_mp3": has_mixed_audio,
+            "captions": has_captions,
             "ai_scene_videos": ai_movie_ready,
             "real_ai_scene_count": real_ai_scene_count,
             "image_motion_scene_count": image_motion_scene_count,

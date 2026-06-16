@@ -712,6 +712,58 @@ class AIMovieEngineV4Tests(unittest.TestCase):
         self.assertEqual(result["real_ai_scene_count"], 0)
         self.assertEqual(result["image_motion_scene_count"], 5)
 
+    def test_publish_ready_requires_mixed_audio_and_captions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            (video_dir / "final.mp4").write_bytes(b"mp4")
+            (video_dir / "voiceover.mp3").write_bytes(b"audio")
+            (video_dir / "video-plan.json").write_text(
+                json.dumps(
+                    {
+                        "scores": {
+                            "hook_score": 95,
+                            "curiosity_score": 95,
+                            "payoff_score": 95,
+                            "shareability_score": 95,
+                            "completion_probability": 95,
+                            "rewatch_probability": 95,
+                            "viral_score": 95,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (video_dir / "ai-video-result.json").write_text(
+                json.dumps(
+                    {
+                        "real_ai_scene_count": 4,
+                        "image_motion_scene_count": 0,
+                        "image_only_scene_count": 0,
+                        "character_consistency_score": 90,
+                        "visual_quality_score": 90,
+                        "motion_quality_score": 90,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (video_dir / "tts-result.json").write_text(
+                json.dumps({"audio_matches_current_text": True, "mixed_voiceover_ready": False}),
+                encoding="utf-8",
+            )
+            missing_mix = score_video_package(video_dir)
+            (video_dir / "tts-result.json").write_text(
+                json.dumps({"audio_matches_current_text": True, "mixed_voiceover_ready": True}),
+                encoding="utf-8",
+            )
+            (video_dir / "captions.json").write_text(json.dumps([{"speaker": "BOB", "word": "BOB: HI"}]), encoding="utf-8")
+            ready = score_video_package(video_dir)
+
+        self.assertFalse(missing_mix["publish_ready"])
+        self.assertFalse(missing_mix["requirements"]["mixed_voiceover_mp3"])
+        self.assertTrue(ready["publish_ready"])
+        self.assertTrue(ready["requirements"]["mixed_voiceover_mp3"])
+        self.assertTrue(ready["requirements"]["captions"])
+
     def test_final_renderer_blocks_image_only_without_real_ai_video(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             video_dir = self._package(Path(tmp))

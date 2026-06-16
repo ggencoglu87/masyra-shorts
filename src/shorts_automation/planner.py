@@ -164,9 +164,9 @@ def write_video_packages(plan: dict, output_root: Path) -> list[Path]:
 
         files = {
             "script.txt": item["script"],
-            "voiceover.txt": item["narration"],
-            "subtitles.srt": make_subtitles(item["narration"]),
-            "captions.json": json.dumps(make_word_captions(item["narration"]), ensure_ascii=False, indent=2),
+            "voiceover.txt": make_dialogue_script(item["storyboard"]),
+            "subtitles.srt": make_dialogue_subtitles(item["storyboard"]),
+            "captions.json": json.dumps(make_dialogue_captions(item["storyboard"]), ensure_ascii=False, indent=2),
             "storyboard.json": json.dumps(item["storyboard"], ensure_ascii=False, indent=2),
             "character_bible.json": json.dumps(item["character_bible"], ensure_ascii=False, indent=2),
             "voice_profile.json": json.dumps(item["voice_profile"], ensure_ascii=False, indent=2),
@@ -264,6 +264,45 @@ def make_narration(story: dict, category: str) -> str:
     return " ".join([story["hook"], story["conflict"], story["escalation"], story["payoff"], story["cta"]])
 
 
+def make_dialogue_script(storyboard: list[dict]) -> str:
+    lines = []
+    for dialogue in _dialogue_lines(storyboard):
+        lines.append(f"{dialogue['speaker_id'].upper()}: {dialogue['line']}")
+    return "\n".join(lines)
+
+
+def make_dialogue_subtitles(storyboard: list[dict]) -> str:
+    blocks = []
+    for index, dialogue in enumerate(_dialogue_lines(storyboard), start=1):
+        label = _speaker_caption(dialogue["speaker_id"])
+        text = f"{label}: {dialogue['line'].upper()}"
+        blocks.append(f"{index}\n{_srt_time_float(float(dialogue['start']))} --> {_srt_time_float(float(dialogue['end']))}\n{text}\n")
+    return "\n".join(blocks)
+
+
+def make_dialogue_captions(storyboard: list[dict]) -> list[dict]:
+    captions = []
+    for dialogue in _dialogue_lines(storyboard):
+        words = [word.strip(".,!?;:") for word in dialogue["line"].split() if word.strip(".,!?;:")]
+        if not words:
+            continue
+        start = float(dialogue["start"])
+        end = float(dialogue["end"])
+        step = max(0.18, (end - start) / max(len(words), 1))
+        speaker = _speaker_caption(dialogue["speaker_id"])
+        for index, word in enumerate(words):
+            captions.append(
+                {
+                    "speaker_id": dialogue["speaker_id"],
+                    "speaker": speaker,
+                    "word": f"{speaker}: {word.upper()}" if index == 0 else word.upper(),
+                    "start": round(start + (index * step), 2),
+                    "end": round(min(end, start + ((index + 1) * step)), 2),
+                }
+            )
+    return captions
+
+
 def make_subtitles(narration: str) -> str:
     words = [word.strip() for word in narration.split() if word.strip()]
     blocks = []
@@ -280,6 +319,22 @@ def make_word_captions(narration: str) -> list[dict]:
         for index, word in enumerate(narration.split()[:72])
         if word.strip()
     ]
+
+
+def _dialogue_lines(storyboard: list[dict]) -> list[dict]:
+    lines = []
+    for scene in storyboard:
+        for dialogue in scene.get("dialogue", []):
+            if dialogue.get("line"):
+                lines.append(dialogue)
+    return lines
+
+
+def _speaker_caption(speaker_id: str) -> str:
+    if speaker_id == "narrator":
+        return "NARRATOR"
+    parts = speaker_id.split("_")
+    return (parts[0] if parts else speaker_id).upper()
 
 
 def make_render_brief(item: dict) -> str:
@@ -410,8 +465,12 @@ def make_storyboard(story: dict, category: str, character_bible: dict) -> list[d
     character_text = character_prompt_text(character_bible)
     universe = character_bible.get("universe", {})
     environment = universe.get("environment", "stylized cinematic animated set")
+    primary = character_ids[0] if character_ids else "narrator"
+    secondary = character_ids[1] if len(character_ids) > 1 else primary
     scenes = []
     for index, (beat, time_range, duration, text, camera, emotion) in enumerate(labels, start=1):
+        scene_start = _time_range_start(time_range)
+        dialogue = _scene_dialogue(index, beat, text, primary, secondary, scene_start, duration, emotion)
         visual_action = visual_prompt_for_scene(category, text)
         prompt_base = _minimax_scene_prompt(
             visual_action=visual_action,
@@ -429,6 +488,7 @@ def make_storyboard(story: dict, category: str, character_bible: dict) -> list[d
                 "duration": duration,
                 "narration": text,
                 "caption": text,
+                "dialogue": dialogue,
                 "visual_action": visual_action,
                 "camera": camera,
                 "emotion": emotion,
@@ -443,6 +503,39 @@ def make_storyboard(story: dict, category: str, character_bible: dict) -> list[d
             }
         )
     return scenes
+
+
+def _scene_dialogue(scene_index: int, beat: str, narration: str, primary: str, secondary: str, scene_start: float, duration: int, emotion: str) -> list[dict]:
+    midpoint = scene_start + max(1.2, duration * 0.52)
+    scene_end = scene_start + duration
+    character_lines = {
+        "Hook": (primary, "I can explain."),
+        "Conflict": (secondary, "Then explain what everyone just saw."),
+        "Escalation": (primary, "Okay, that looks worse than it is."),
+        "Payoff": (secondary, "Somehow, this is exactly what I expected."),
+    }
+    speaker_id, line = character_lines.get(beat, (primary, "Wait. Did that just happen?"))
+    return [
+        {
+            "speaker_id": "narrator",
+            "line": narration,
+            "emotion": emotion,
+            "start": round(scene_start, 2),
+            "end": round(min(midpoint, scene_end), 2),
+        },
+        {
+            "speaker_id": speaker_id,
+            "line": line,
+            "emotion": emotion,
+            "start": round(min(midpoint, scene_end - 0.2), 2),
+            "end": round(scene_end, 2),
+        },
+    ]
+
+
+def _time_range_start(value: str) -> float:
+    match = re.match(r"(\d+(?:\.\d+)?)", value or "")
+    return float(match.group(1)) if match else 0.0
 
 
 def _minimax_scene_prompt(*, visual_action: str, character_text: str, environment: str, camera: str, emotion: str, style: str) -> str:

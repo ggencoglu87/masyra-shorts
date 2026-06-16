@@ -75,11 +75,13 @@ def build_character_bible(category: str) -> dict:
         character["style_reference"] = STYLE_REFERENCE
         character["appearance_hash"] = hashlib.sha256(visual.encode("utf-8")).hexdigest()[:16]
         character.setdefault("voice", voice_for_category(category))
+        character.setdefault("voice_profile", voice_profile_for_character(character, category))
         character.setdefault("memory", [])
         character["universe"] = universe["id"]
     return {
         "universe": universe,
         "style": STYLE_REFERENCE,
+        "narrator_voice_profile": narrator_voice_profile(category),
         "consistency_rules": [
             "Use the exact same character ids and appearance in every scene.",
             "Do not change clothing, colors, species, face shape, or accessories between scenes.",
@@ -145,6 +147,54 @@ def voice_for_category(category: str) -> str:
         "Crazy Facts": "excited fact narrator",
     }
     return voices.get(category, "cinematic story narrator")
+
+
+def narrator_voice_profile(category: str) -> dict:
+    return {
+        "voice_id": "narrator_main",
+        "provider": "auto",
+        "gender_tone": "neutral warm narrator",
+        "speaking_style": voice_for_category(category),
+        "emotion_range": "curious, cinematic, playful, suspenseful when needed",
+        "sample_line": "Nobody expected what happened next.",
+    }
+
+
+def voice_profile_for_character(character: dict, category: str) -> dict:
+    species = str(character.get("species", "character")).lower()
+    personality = str(character.get("personality", "expressive")).lower()
+    if "chicken" in species:
+        tone = "male raspy comic rival"
+        style = "fast sarcastic squawks with sharp timing"
+        sample = "Then explain the fish on your face."
+    elif "cat" in species:
+        tone = "male theatrical comedy"
+        style = "dramatic overconfident excuses with quick panic"
+        sample = "I can explain."
+    elif "pug" in species:
+        tone = "small nervous comic"
+        style = "breathy guilty energy with cute panic"
+        sample = "I was only checking if it was safe."
+    elif "robot" in species:
+        tone = "bright synthetic sidekick"
+        style = "precise anxious beeps with fast delivery"
+        sample = "Risk level is now extremely embarrassing."
+    elif "ghost" in species:
+        tone = "female mischievous airy"
+        style = "playful spooky confidence"
+        sample = "Relax. It only screams during quizzes."
+    else:
+        tone = "expressive animated character"
+        style = f"{personality} animated dialogue"
+        sample = "Wait. Did anyone else see that?"
+    return {
+        "voice_id": str(character.get("id", "character_voice")),
+        "provider": "auto",
+        "gender_tone": tone,
+        "speaking_style": style,
+        "emotion_range": "neutral, curious, worried, excited, surprised, relieved",
+        "sample_line": sample,
+    }
 
 
 def _characters_for_category(category: str) -> list[dict]:

@@ -11,6 +11,7 @@ import base64
 import urllib.error
 import urllib.request
 import wave
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -376,6 +377,20 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
         }
         return _write_tts_result(video_dir, result_path, result, force=force)
 
+    dialogue_lines = _parse_dialogue_script(text)
+    if dialogue_lines:
+        return _synthesize_multi_voiceover(
+            video_dir=video_dir,
+            provider_name=provider_name,
+            providers=providers,
+            dialogue_lines=dialogue_lines,
+            output_path=output_path,
+            result_path=result_path,
+            source_text_hash=source_text_hash,
+            stale_audio_warning=stale_audio_warning,
+            force=force,
+        )
+
     attempts = []
     result = {
         "requested_provider": provider_name,
@@ -506,7 +521,172 @@ def tts_status(video_dir: Path) -> dict:
         "audio_matches_current_text": bool(output_path.exists() and current_hash and recorded_hash == current_hash and recorded_audio_hash == audio_hash),
         "requested_provider": result.get("requested_provider") or result.get("provider"),
         "provider_used": result.get("provider_used") or result.get("provider"),
+        "voice_mode": result.get("voice_mode", "single"),
+        "voices_used": result.get("voices_used", []),
+        "narrator_ready": bool(result.get("narrator_ready")),
+        "character_voices_ready": bool(result.get("character_voices_ready")),
+        "mixed_voiceover_ready": bool(result.get("mixed_voiceover_ready") or output_path.exists()),
     }
+
+
+def _synthesize_multi_voiceover(
+    *,
+    video_dir: Path,
+    provider_name: str,
+    providers: list[TTSProvider],
+    dialogue_lines: list[dict],
+    output_path: Path,
+    result_path: Path,
+    source_text_hash: str,
+    stale_audio_warning: str | None,
+    force: bool,
+) -> dict:
+    audio_dir = video_dir / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    character_bible = _read_json(video_dir / "character_bible.json")
+    voice_profiles = _voice_profiles(character_bible)
+    attempts = []
+    clips = []
+    speaker_counts: dict[str, int] = {}
+    providers_used = []
+
+    for line in dialogue_lines:
+        speaker_id = line["speaker_id"]
+        speaker_counts[speaker_id] = speaker_counts.get(speaker_id, 0) + 1
+        clip_path = audio_dir / f"{_safe_filename(speaker_id)}-{speaker_counts[speaker_id]:02d}.mp3"
+        voice_profile = voice_profiles.get(speaker_id, {})
+        created = None
+        for provider in providers:
+            started = time.monotonic()
+            try:
+                attempt = provider.synthesize(text=line["line"], output_path=clip_path)
+            except Exception as exc:
+                elapsed = round(time.monotonic() - started, 3)
+                attempts.append(
+                    {
+                        "speaker_id": speaker_id,
+                        "provider": provider.name,
+                        "created": False,
+                        "warning": f"TTS failed for {speaker_id} with {provider.name}: {exc}",
+                        "generation_time": elapsed,
+                        "voice_profile": voice_profile,
+                    }
+                )
+                continue
+            elapsed = round(time.monotonic() - started, 3)
+            attempt = {
+                **attempt,
+                "speaker_id": speaker_id,
+                "line": line["line"],
+                "emotion": line.get("emotion"),
+                "generation_time": elapsed,
+                "voice_profile": voice_profile,
+            }
+            attempts.append(attempt)
+            if attempt.get("created") and clip_path.exists():
+                created = attempt
+                providers_used.append(provider.name)
+                break
+        if not created:
+            result = {
+                "requested_provider": provider_name,
+                "provider": providers[0].name if providers else "off",
+                "provider_used": None,
+                "voice_mode": "multi_character",
+                "created": False,
+                "output": None,
+                "source_text_hash": source_text_hash,
+                "generated_audio_hash": _file_hash(output_path),
+                "audio_matches_current_text": False,
+                "narrator_ready": False,
+                "character_voices_ready": False,
+                "mixed_voiceover_ready": False,
+                "voices_used": sorted(set(speaker_counts)),
+                "clips": clips,
+                "fallback_attempts": attempts,
+                "warning": f"No TTS provider created audio for speaker {speaker_id}.",
+            }
+            return _write_tts_result(video_dir, result_path, result, force=force)
+        clips.append(
+            {
+                "speaker_id": speaker_id,
+                "line": line["line"],
+                "emotion": line.get("emotion"),
+                "file": clip_path.relative_to(video_dir).as_posix(),
+                "provider_used": created.get("provider"),
+                "voice_profile": voice_profile,
+            }
+        )
+
+    mixed = _mix_audio_clips([video_dir / clip["file"] for clip in clips], output_path)
+    voices_used = sorted({clip["speaker_id"] for clip in clips})
+    character_voices = [voice for voice in voices_used if voice != "narrator"]
+    result = {
+        "requested_provider": provider_name,
+        "provider": providers_used[0] if providers_used else providers[0].name,
+        "provider_used": ",".join(dict.fromkeys(providers_used)),
+        "voice_mode": "multi_character",
+        "created": bool(mixed and output_path.exists()),
+        "output": str(output_path) if output_path.exists() else None,
+        "source_text_hash": source_text_hash,
+        "generated_audio_hash": _file_hash(output_path),
+        "audio_matches_current_text": bool(mixed and output_path.exists()),
+        "source_text_preview": "\n".join(f"{line['speaker_id'].upper()}: {line['line']}" for line in dialogue_lines)[:240],
+        "regenerated_due_to_source_change": bool(stale_audio_warning and mixed),
+        "narrator_ready": "narrator" in voices_used,
+        "character_voices_ready": bool(character_voices) and all((video_dir / clip["file"]).exists() for clip in clips if clip["speaker_id"] != "narrator"),
+        "mixed_voiceover_ready": bool(mixed and output_path.exists()),
+        "voices_used": voices_used,
+        "clips": clips,
+        "fallback_attempts": attempts,
+        "warning": None if mixed else "Dialogue clips were created, but final voiceover.mp3 mix failed.",
+    }
+    if stale_audio_warning and not result.get("warning"):
+        result["warning"] = stale_audio_warning
+    return _write_tts_result(video_dir, result_path, result, force=force)
+
+
+def _parse_dialogue_script(text: str) -> list[dict]:
+    lines = []
+    for raw in text.splitlines():
+        match = re.match(r"^\s*([A-Za-z0-9_]+)\s*:\s*(.+?)\s*$", raw)
+        if match:
+            lines.append({"speaker_id": match.group(1).lower(), "line": match.group(2), "emotion": "dialogue"})
+    return lines if len(lines) >= 2 else []
+
+
+def _voice_profiles(character_bible: dict) -> dict:
+    profiles = {"narrator": character_bible.get("narrator_voice_profile", {})}
+    for character in character_bible.get("characters", []):
+        if character.get("id"):
+            profiles[character["id"]] = character.get("voice_profile", {})
+    return profiles
+
+
+def _mix_audio_clips(clips: list[Path], output_path: Path) -> bool:
+    clips = [clip for clip in clips if clip.exists()]
+    if not clips:
+        return False
+    if shutil.which("ffmpeg"):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            list_path = Path(temp_dir) / "clips.txt"
+            list_path.write_text("".join(f"file '{str(clip).replace(chr(39), chr(39) + '\\\\' + chr(39) + chr(39))}'\n" for clip in clips), encoding="utf-8")
+            completed = subprocess.run(
+                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_path), "-c:a", "libmp3lame", "-b:a", "128k", str(output_path)],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            if completed.returncode == 0 and output_path.exists():
+                return True
+    with output_path.open("wb") as mixed:
+        for clip in clips:
+            mixed.write(clip.read_bytes())
+    return output_path.exists()
+
+
+def _safe_filename(value: str) -> str:
+    return re.sub(r"[^a-z0-9_]+", "_", value.lower()).strip("_") or "voice"
 
 
 def _text_hash(text: str) -> str:
