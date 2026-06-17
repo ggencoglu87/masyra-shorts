@@ -153,10 +153,14 @@ def narrator_voice_profile(category: str) -> dict:
     return {
         "voice_id": "narrator_main",
         "provider": "auto",
+        "gender": "neutral",
+        "tone": "warm cinematic",
         "gender_tone": "neutral warm narrator",
         "speaking_style": voice_for_category(category),
         "emotion_range": "curious, cinematic, playful, suspenseful when needed",
         "sample_line": "Nobody expected what happened next.",
+        "google_voice_name": "Puck",
+        "piper_model_env": "PIPER_MODEL_PATH_NARRATOR_MAIN",
     }
 
 
@@ -165,35 +169,52 @@ def voice_profile_for_character(character: dict, category: str) -> dict:
     personality = str(character.get("personality", "expressive")).lower()
     if "chicken" in species:
         tone = "male raspy comic rival"
+        gender = "male"
         style = "fast sarcastic squawks with sharp timing"
         sample = "Then explain the fish on your face."
+        google_voice = "Fenrir"
     elif "cat" in species:
         tone = "male theatrical comedy"
+        gender = "male"
         style = "dramatic overconfident excuses with quick panic"
         sample = "I can explain."
+        google_voice = "Puck"
     elif "pug" in species:
         tone = "small nervous comic"
+        gender = "neutral"
         style = "breathy guilty energy with cute panic"
         sample = "I was only checking if it was safe."
+        google_voice = "Kore"
     elif "robot" in species:
         tone = "bright synthetic sidekick"
+        gender = "neutral"
         style = "precise anxious beeps with fast delivery"
         sample = "Risk level is now extremely embarrassing."
+        google_voice = "Charon"
     elif "ghost" in species:
         tone = "female mischievous airy"
+        gender = "female"
         style = "playful spooky confidence"
         sample = "Relax. It only screams during quizzes."
+        google_voice = "Leda"
     else:
         tone = "expressive animated character"
+        gender = "neutral"
         style = f"{personality} animated dialogue"
         sample = "Wait. Did anyone else see that?"
+        google_voice = "Aoede"
+    voice_id = str(character.get("id", "character_voice"))
     return {
-        "voice_id": str(character.get("id", "character_voice")),
+        "voice_id": voice_id,
         "provider": "auto",
+        "gender": gender,
+        "tone": tone,
         "gender_tone": tone,
         "speaking_style": style,
         "emotion_range": "neutral, curious, worried, excited, surprised, relieved",
         "sample_line": sample,
+        "google_voice_name": google_voice,
+        "piper_model_env": f"PIPER_MODEL_PATH_{_slug(voice_id).upper()}",
     }
 
 

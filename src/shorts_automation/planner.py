@@ -142,7 +142,10 @@ def make_content_item(trend: dict, rank: int, channel_name: str) -> dict:
         "hashtags": hashtags,
         "production": {
             "format": "vertical 9:16",
-            "duration_target_seconds": 26,
+            "duration_target_seconds": 30,
+            "duration_range_seconds": [25, 35],
+            "minimum_dialogue_lines": 20,
+            "minimum_character_dialogue_percentage": 30,
             "caption_style": "TikTok word-by-word large burned captions",
             "visual_style": visual_style_for_category(category),
             "asset_policy": "Use AI-generated character images and AI scene videos first. Stock footage is fallback only.",
@@ -254,14 +257,15 @@ def make_script(story: dict, category: str) -> str:
         [
             f"0-3s HOOK: {story['hook']}",
             f"3-10s CONFLICT: {story['conflict']}",
-            f"10-20s ESCALATION: {story['escalation']}",
-            f"20-30s PAYOFF: {story['payoff']}",
+            f"10-18s ESCALATION: {story['escalation']}",
+            f"18-25s TWIST: {story['twist']}",
+            f"25-30s PAYOFF: {story['payoff']}",
         ]
     )
 
 
 def make_narration(story: dict, category: str) -> str:
-    return " ".join([story["hook"], story["conflict"], story["escalation"], story["payoff"], story["cta"]])
+    return " ".join([story["hook"], story["conflict"], story["escalation"], story["twist"], story["payoff"], story["cta"]])
 
 
 def make_dialogue_script(storyboard: list[dict]) -> str:
@@ -295,7 +299,7 @@ def make_dialogue_captions(storyboard: list[dict]) -> list[dict]:
                 {
                     "speaker_id": dialogue["speaker_id"],
                     "speaker": speaker,
-                    "word": f"{speaker}: {word.upper()}" if index == 0 else word.upper(),
+                    "word": word.upper(),
                     "start": round(start + (index * step), 2),
                     "end": round(min(end, start + ((index + 1) * step)), 2),
                 }
@@ -408,6 +412,7 @@ def build_story(topic: str, category: str, character_bible: dict | None = None) 
             "Bob promised he was done causing trouble.",
             "Then Carl found muddy paw prints leading straight to the prize pie.",
             "Bob tried to hide the evidence, but every farm animal started following the smell.",
+            "Carl revealed a second trail of crumbs going under Bob's hat.",
             "The pie was safe the whole time, because Carl had hidden it from Bob first.",
             "Would Carl survive one day without making Bob look guilty?",
         ),
@@ -415,6 +420,7 @@ def build_story(topic: str, category: str, character_bible: dict | None = None) 
             "Willow heard the forest whisper her name.",
             "Bramble begged her not to follow the glowing footprints past the old stone gate.",
             "The footprints split into two trails, and one trail copied Willow's voice perfectly.",
+            "The fake voice started answering questions only Bramble should know.",
             "The voice was a scared baby moon-moth trying to find its way home.",
             "Would you follow the voice or run back?",
         ),
@@ -422,6 +428,7 @@ def build_story(topic: str, category: str, character_bible: dict | None = None) 
             "Nova had thirty seconds before the simulator exploded.",
             "Zip said the rules were clear: never touch the red gravity switch.",
             "Nova touched it anyway, and the whole academy cafeteria floated into orbit.",
+            "The simulator announced the explosion was actually a surprise exam.",
             "The switch saved everyone, but Zip had already filed a panic report.",
             "Would Nova get detention or a medal?",
         ),
@@ -429,6 +436,7 @@ def build_story(topic: str, category: str, character_bible: dict | None = None) 
             "Pixel swore he did not eat the missing sandwich.",
             "Miso noticed one tiny crumb stuck to Pixel's green bow tie.",
             "Pixel staged a fake investigation, but every clue pointed back to his nap bed.",
+            "The final clue was a perfect paw print on Miso's own plate.",
             "Miso had eaten the sandwich too, and only framed Pixel to make him confess first.",
             "Which pet would you trust?",
         ),
@@ -436,11 +444,12 @@ def build_story(topic: str, category: str, character_bible: dict | None = None) 
             "Milo heard knocking from the locker nobody opens.",
             "Nora dared him to answer before the bell rang.",
             "The locker whispered Milo's homework answers in his own voice.",
+            "Then the locker begged them not to tell the teacher.",
             "Inside was a tiny scared echo monster asking to join class.",
             "Would you open the locker?",
         ),
     }
-    hook, conflict, escalation, payoff, cta = templates.get(universe_id, templates["space_academy"])
+    hook, conflict, escalation, twist, payoff, cta = templates.get(universe_id, templates["space_academy"])
     return {
         "topic_seed": topic,
         "universe": universe,
@@ -449,6 +458,7 @@ def build_story(topic: str, category: str, character_bible: dict | None = None) 
         "conflict": conflict,
         "curiosity": conflict,
         "escalation": escalation,
+        "twist": twist,
         "payoff": payoff,
         "cta": cta,
     }
@@ -458,8 +468,9 @@ def make_storyboard(story: dict, category: str, character_bible: dict) -> list[d
     labels = [
         ("Hook", "0-3s", 3, story["hook"], "slow push-in, cinematic close-up", "shock and curiosity"),
         ("Conflict", "3-10s", 7, story["conflict"], "side tracking shot, expressive reaction", "accusation and tension"),
-        ("Escalation", "10-20s", 10, story["escalation"], "dynamic handheld animated camera, quick reveal, foreground character reaction", "panic and surprise"),
-        ("Payoff", "20-30s", 10, story["payoff"], "wide shot into punchline close-up, clean final pose", "comic reversal and emotional payoff"),
+        ("Escalation", "10-18s", 8, story["escalation"], "dynamic handheld animated camera, quick reveal, foreground character reaction", "panic and surprise"),
+        ("Twist", "18-25s", 7, story["twist"], "dramatic low angle, fast character motion, reaction insert", "shocked reversal"),
+        ("Payoff", "25-30s", 5, story["payoff"], "wide shot into punchline close-up, clean final pose", "comic reversal and emotional payoff"),
     ]
     character_ids = [character["id"] for character in character_bible.get("characters", [])]
     character_text = character_prompt_text(character_bible)
@@ -502,39 +513,79 @@ def make_storyboard(story: dict, category: str, character_bible: dict) -> list[d
                 "search_queries": scene_search_queries(category, text),
             }
         )
-    return scenes
+    return _ensure_story_minimums(scenes, primary, secondary)
 
 
 def _scene_dialogue(scene_index: int, beat: str, narration: str, primary: str, secondary: str, scene_start: float, duration: int, emotion: str) -> list[dict]:
-    midpoint = scene_start + max(1.2, duration * 0.52)
     scene_end = scene_start + duration
     character_lines = {
-        "Hook": (primary, "I can explain."),
-        "Conflict": (secondary, "Then explain what everyone just saw."),
-        "Escalation": (primary, "Okay, that looks worse than it is."),
-        "Payoff": (secondary, "Somehow, this is exactly what I expected."),
+        "Hook": [(primary, "I can explain."), (secondary, "You always say that."), (primary, "This time has context.")],
+        "Conflict": [(secondary, "Then explain what everyone just saw."), (primary, "Technically, nobody saw the beginning."), (secondary, "The mud saw everything.")],
+        "Escalation": [(primary, "Okay, that looks worse than it is."), (secondary, "It smells worse too."), (primary, "That is a separate issue.")],
+        "Twist": [(secondary, "Wait. Why are the crumbs on me?"), (primary, "I was hoping you would not notice."), (secondary, "I notice professionally.")],
+        "Payoff": [(primary, "So we are both innocent?"), (secondary, "No. We are both caught."), (primary, "That feels unfairly accurate.")],
     }
-    speaker_id, line = character_lines.get(beat, (primary, "Wait. Did that just happen?"))
-    return [
+    lines = [
         {
             "speaker_id": "narrator",
             "line": narration,
             "emotion": emotion,
             "start": round(scene_start, 2),
-            "end": round(min(midpoint, scene_end), 2),
-        },
-        {
-            "speaker_id": speaker_id,
-            "line": line,
-            "emotion": emotion,
-            "start": round(min(midpoint, scene_end - 0.2), 2),
-            "end": round(scene_end, 2),
-        },
+            "end": round(min(scene_start + max(1.0, duration * 0.35), scene_end), 2),
+        }
     ]
+    character_start = lines[0]["end"]
+    character_duration = max(0.6, (scene_end - character_start) / 3)
+    for offset, (speaker_id, line) in enumerate(character_lines.get(beat, [(primary, "Wait. Did that just happen?")])):
+        start = character_start + (offset * character_duration)
+        end = scene_end if offset == 2 else min(scene_end, start + character_duration)
+        lines.append(
+            {
+                "speaker_id": speaker_id,
+                "line": line,
+                "emotion": emotion,
+                "start": round(start, 2),
+                "end": round(end, 2),
+            }
+        )
+    return lines
+
+
+def _ensure_story_minimums(scenes: list[dict], primary: str, secondary: str) -> list[dict]:
+    line_count = sum(len(scene.get("dialogue", [])) for scene in scenes)
+    scene_index = 0
+    while line_count < 20 and scenes:
+        scene = scenes[scene_index % len(scenes)]
+        speaker_id = primary if line_count % 2 == 0 else secondary
+        scene_end = _time_range_end(str(scene.get("time", ""))) or float(scene.get("duration", 0) or 0)
+        scene.setdefault("dialogue", []).append(
+            {
+                "speaker_id": speaker_id,
+                "line": "Wait, that changes everything.",
+                "emotion": scene.get("emotion", "surprised"),
+                "start": round(max(0.0, scene_end - 0.8), 2),
+                "end": round(scene_end, 2),
+            }
+        )
+        line_count += 1
+        scene_index += 1
+
+    total_duration = sum(float(scene.get("duration", 0) or 0) for scene in scenes)
+    if scenes and total_duration < 25:
+        deficit = 25 - total_duration
+        scenes[-1]["duration"] = round(float(scenes[-1].get("duration", 0) or 0) + deficit, 2)
+        start = _time_range_start(str(scenes[-1].get("time", "")))
+        scenes[-1]["time"] = f"{int(start)}-{int(start + scenes[-1]['duration'])}s"
+    return scenes
 
 
 def _time_range_start(value: str) -> float:
     match = re.match(r"(\d+(?:\.\d+)?)", value or "")
+    return float(match.group(1)) if match else 0.0
+
+
+def _time_range_end(value: str) -> float:
+    match = re.search(r"-(\d+(?:\.\d+)?)s?$", value or "")
     return float(match.group(1)) if match else 0.0
 
 

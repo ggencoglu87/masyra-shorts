@@ -413,7 +413,7 @@ def render_video_detail(output_dir: Path, store: StatusStore, video_dir: Path) -
         {file_section("video-clips-result.json", json.dumps(clip_result, ensure_ascii=False, indent=2))}
         {file_section("ai-video-result.json", json.dumps(ai_video_result, ensure_ascii=False, indent=2))}
         {file_section("character_bible.json", json.dumps(character_bible, ensure_ascii=False, indent=2))}
-        {file_section("quality-score.json", json.dumps(quality, ensure_ascii=False, indent=2))}
+        {file_section("quality-result.json", json.dumps(quality, ensure_ascii=False, indent=2))}
         {file_section("visual-result.json", json.dumps(visual_result, ensure_ascii=False, indent=2))}
         {file_section("script.txt", _read_text(video_dir / "script.txt"))}
         {file_section("voiceover.txt", _read_text(video_dir / "voiceover.txt"))}
@@ -496,7 +496,14 @@ def dashboard_asset_status(video_dir: Path) -> dict:
     real_openai_visuals_ready = bool(visual_result.get("real_visuals_ready"))
     placeholder_visuals = _placeholder_visuals(scene_manifest, visual_result)
     audio_ready = bool(tts_result.get("audio_matches_current_text") and tts_result.get("mixed_voiceover_ready", (video_dir / "voiceover.mp3").exists()))
+    estimated_episode_duration = float(tts_result.get("estimated_episode_duration") or _storyboard_duration(video_dir) or 0)
+    dialogue_percentage = float(tts_result.get("dialogue_percentage") or _dialogue_percentage(video_dir) or 0)
+    dialogue_line_count = int(tts_result.get("dialogue_line_count") or _dialogue_line_count(video_dir) or 0)
+    speaker_count = int(tts_result.get("speaker_count") or len(tts_result.get("voices_used", [])) or _speaker_count(video_dir) or 0)
     provider_used = tts_result.get("provider_used") or tts_result.get("provider")
+    min_lines_pass = dialogue_line_count >= 20
+    min_duration_pass = estimated_episode_duration >= 25
+    caption_validation_pass = _caption_validation(video_dir)
     ai_movie_ready = bool(
         ai_videos_ready
         and final_exists
@@ -504,7 +511,14 @@ def dashboard_asset_status(video_dir: Path) -> dict:
         and ai_video_result.get("visual_quality_score", 0) >= 75
         and ai_video_result.get("motion_quality_score", 0) >= 70
     )
-    publish_ready = bool(ai_movie_ready and audio_ready)
+    publish_ready = bool(
+        ai_movie_ready
+        and audio_ready
+        and min_duration_pass
+        and dialogue_percentage >= 30
+        and min_lines_pass
+        and caption_validation_pass
+    )
     return {
         "character_bible_ready": (video_dir / "character_bible.json").exists(),
         "final_mp4": final_exists,
@@ -530,6 +544,14 @@ def dashboard_asset_status(video_dir: Path) -> dict:
         "audio_provider": provider_used or "not generated",
         "voice_mode": tts_result.get("voice_mode", "single"),
         "voices_used": tts_result.get("voices_used", []),
+        "speaker_count": speaker_count,
+        "estimated_episode_duration": estimated_episode_duration,
+        "dialogue_percentage": dialogue_percentage,
+        "dialogue_line_count": dialogue_line_count,
+        "min_lines_pass": min_lines_pass,
+        "min_duration_pass": min_duration_pass,
+        "caption_validation_pass": caption_validation_pass,
+        "voice_separation_mode": tts_result.get("voice_separation_mode", "single"),
         "narrator_ready": bool(tts_result.get("narrator_ready", audio_ready)),
         "character_voices_ready": bool(tts_result.get("character_voices_ready", audio_ready)),
         "mixed_voiceover_ready": bool(tts_result.get("mixed_voiceover_ready", audio_ready)),
@@ -603,7 +625,7 @@ def file_section(title: str, content: str) -> str:
 
 def quality_section(quality: dict) -> str:
     if not quality:
-        return '<section class="score-strip"><div class="missing">No quality-score.json yet.</div></section>'
+        return '<section class="score-strip"><div class="missing">No quality-result.json yet.</div></section>'
     return f"""
     <section class="score-strip">
       {score_box("Retention", quality.get("retention_score", ""))}
@@ -631,7 +653,15 @@ def asset_status_section(status: dict) -> str:
       {score_box("Video Provider", status.get("video_provider", ""))}
       {score_box("Audio Provider", status.get("audio_provider", ""))}
       {score_box("Voice Mode", status.get("voice_mode", "single"))}
+      {score_box("Voice Separation", status.get("voice_separation_mode", "single"))}
       {score_box("Voices Used", ", ".join(status.get("voices_used", [])) or "missing")}
+      {score_box("Speaker Count", status.get("speaker_count", 0))}
+      {score_box("Est. Duration", f"{status.get('estimated_episode_duration', 0)}s")}
+      {score_box("Dialogue %", f"{status.get('dialogue_percentage', 0)}%")}
+      {score_box("Dialogue Lines", status.get("dialogue_line_count", 0))}
+      {score_box("Min Lines", "PASS" if status.get("min_lines_pass") else "FAIL")}
+      {score_box("Min Duration", "PASS" if status.get("min_duration_pass") else "FAIL")}
+      {score_box("Caption Validation", "PASS" if status.get("caption_validation_pass") else "FAIL")}
       {score_box("Narrator Ready", "Yes" if status.get("narrator_ready") else "No")}
       {score_box("Character Voices", "Yes" if status.get("character_voices_ready") else "No")}
       {score_box("Mixed Voiceover", "Yes" if status.get("mixed_voiceover_ready") else "No")}
@@ -775,6 +805,51 @@ def _dialogue_preview(dialogue: object) -> str:
         for line in dialogue
         if isinstance(line, dict) and line.get("line")
     )
+
+
+def _storyboard_duration(video_dir: Path) -> float:
+    storyboard = _read_json(video_dir / "storyboard.json")
+    if not isinstance(storyboard, list):
+        return 0.0
+    return round(sum(float(scene.get("duration", 0) or 0) for scene in storyboard if isinstance(scene, dict)), 2)
+
+
+def _dialogue_percentage(video_dir: Path) -> float:
+    lines = _storyboard_dialogue_lines(video_dir)
+    character_lines = [line for line in lines if line.get("speaker_id") != "narrator"]
+    return round((len(character_lines) / max(len(lines), 1)) * 100, 2)
+
+
+def _speaker_count(video_dir: Path) -> int:
+    return len({line.get("speaker_id") for line in _storyboard_dialogue_lines(video_dir) if line.get("speaker_id")})
+
+
+def _dialogue_line_count(video_dir: Path) -> int:
+    return len([line for line in _storyboard_dialogue_lines(video_dir) if line.get("line")])
+
+
+def _caption_validation(video_dir: Path) -> bool:
+    captions = _read_json(video_dir / "captions.json")
+    if not isinstance(captions, list) or not captions:
+        return False
+    for item in captions:
+        if not isinstance(item, dict):
+            return False
+        word = str(item.get("word", ""))
+        if not word or ":" in word:
+            return False
+    return True
+
+
+def _storyboard_dialogue_lines(video_dir: Path) -> list[dict]:
+    storyboard = _read_json(video_dir / "storyboard.json")
+    if not isinstance(storyboard, list):
+        return []
+    lines = []
+    for scene in storyboard:
+        if isinstance(scene, dict):
+            lines.extend(line for line in scene.get("dialogue", []) if isinstance(line, dict))
+    return lines
 
 
 def captions_section(captions: object) -> str:

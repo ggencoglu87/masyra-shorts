@@ -29,6 +29,9 @@ class TTSProvider:
     def synthesize(self, text: str, output_path: Path) -> dict:
         raise NotImplementedError
 
+    def synthesize_voice(self, text: str, output_path: Path, voice_profile: dict) -> dict:
+        return self.synthesize(text, output_path)
+
 
 class UnavailableTTSProvider(TTSProvider):
     name = "unavailable"
@@ -74,6 +77,13 @@ class MockTTSProvider(TTSProvider):
             "output": str(output_path),
             "warning": self.reason,
         }
+
+    def synthesize_voice(self, text: str, output_path: Path, voice_profile: dict) -> dict:
+        voice_seed = f"{voice_profile.get('voice_id') or output_path.stem}: {voice_profile.get('speaking_style', '')}: {text}"
+        result = self.synthesize(voice_seed, output_path)
+        result["voice_id"] = voice_profile.get("voice_id")
+        result["voice_separation"] = "mock_voice_seed"
+        return result
 
 
 class ElevenLabsTTSProvider(TTSProvider):
@@ -123,6 +133,14 @@ class ElevenLabsTTSProvider(TTSProvider):
             "voice_id": self.voice_id,
             "model_id": self.model_id,
         }
+
+    def synthesize_voice(self, text: str, output_path: Path, voice_profile: dict) -> dict:
+        voice_id = voice_profile.get("elevenlabs_voice_id") or self.voice_id
+        provider = ElevenLabsTTSProvider(api_key=self.api_key, voice_id=voice_id, model_id=self.model_id)
+        result = provider.synthesize(text, output_path)
+        result["voice_profile"] = voice_profile
+        result["voice_separation"] = "provider_voice_id"
+        return result
 
 
 class GoogleAITTSProvider(TTSProvider):
@@ -174,6 +192,14 @@ class GoogleAITTSProvider(TTSProvider):
             "model_id": self.model_id,
             "voice_name": self.voice_name,
         }
+
+    def synthesize_voice(self, text: str, output_path: Path, voice_profile: dict) -> dict:
+        voice_name = voice_profile.get("google_voice_name") or self.voice_name
+        provider = GoogleAITTSProvider(api_key=self.api_key, model_id=self.model_id, voice_name=voice_name)
+        result = provider.synthesize(text, output_path)
+        result["voice_profile"] = voice_profile
+        result["voice_separation"] = "provider_voice_name"
+        return result
 
 
 class PiperTTSProvider(TTSProvider):
@@ -263,6 +289,16 @@ class PiperTTSProvider(TTSProvider):
             "warning": None,
             "model_path": str(self.model_path),
         }
+
+    def synthesize_voice(self, text: str, output_path: Path, voice_profile: dict) -> dict:
+        voice_id = _safe_filename(str(voice_profile.get("voice_id") or output_path.stem)).upper()
+        model_env = voice_profile.get("piper_model_env") or f"PIPER_MODEL_PATH_{voice_id}"
+        model_override = os.getenv(str(model_env))
+        provider = PiperTTSProvider(model_path=model_override or str(self.model_path), binary=self.binary)
+        result = provider.synthesize(text, output_path)
+        result["voice_profile"] = voice_profile
+        result["voice_separation"] = "piper_voice_model" if model_override else "piper_shared_model_voice_profile"
+        return result
 
 
 def get_tts_provider(name: str) -> TTSProvider | None:
@@ -559,7 +595,11 @@ def _synthesize_multi_voiceover(
         for provider in providers:
             started = time.monotonic()
             try:
-                attempt = provider.synthesize(text=line["line"], output_path=clip_path)
+                synthesize_voice = getattr(provider, "synthesize_voice", None)
+                if callable(synthesize_voice):
+                    attempt = synthesize_voice(text=line["line"], output_path=clip_path, voice_profile=voice_profile)
+                else:
+                    attempt = provider.synthesize(text=line["line"], output_path=clip_path)
             except Exception as exc:
                 elapsed = round(time.monotonic() - started, 3)
                 attempts.append(
@@ -621,6 +661,8 @@ def _synthesize_multi_voiceover(
     mixed = _mix_audio_clips([video_dir / clip["file"] for clip in clips], output_path)
     voices_used = sorted({clip["speaker_id"] for clip in clips})
     character_voices = [voice for voice in voices_used if voice != "narrator"]
+    metrics = _dialogue_metrics(video_dir, dialogue_lines)
+    separation_modes = sorted({str(attempt.get("voice_separation")) for attempt in attempts if attempt.get("voice_separation")})
     result = {
         "requested_provider": provider_name,
         "provider": providers_used[0] if providers_used else providers[0].name,
@@ -637,6 +679,11 @@ def _synthesize_multi_voiceover(
         "character_voices_ready": bool(character_voices) and all((video_dir / clip["file"]).exists() for clip in clips if clip["speaker_id"] != "narrator"),
         "mixed_voiceover_ready": bool(mixed and output_path.exists()),
         "voices_used": voices_used,
+        "speaker_count": len(voices_used),
+        "estimated_episode_duration": metrics["estimated_episode_duration"],
+        "dialogue_percentage": metrics["dialogue_percentage"],
+        "dialogue_line_count": metrics["line_count"],
+        "voice_separation_mode": ", ".join(separation_modes) or "shared_provider_settings",
         "clips": clips,
         "fallback_attempts": attempts,
         "warning": None if mixed else "Dialogue clips were created, but final voiceover.mp3 mix failed.",
@@ -661,6 +708,27 @@ def _voice_profiles(character_bible: dict) -> dict:
         if character.get("id"):
             profiles[character["id"]] = character.get("voice_profile", {})
     return profiles
+
+
+def _dialogue_metrics(video_dir: Path, dialogue_lines: list[dict]) -> dict:
+    storyboard = _read_json(video_dir / "storyboard.json")
+    timed_lines = []
+    if isinstance(storyboard, list):
+        for scene in storyboard:
+            for line in scene.get("dialogue", []):
+                if isinstance(line, dict) and line.get("line"):
+                    timed_lines.append(line)
+    source = timed_lines or dialogue_lines
+    starts = [float(line.get("start", 0) or 0) for line in source if isinstance(line, dict)]
+    ends = [float(line.get("end", 0) or 0) for line in source if isinstance(line, dict)]
+    estimated_duration = max(ends) if ends else max(0.0, len(dialogue_lines) * 1.6)
+    character_lines = [line for line in dialogue_lines if line.get("speaker_id") != "narrator"]
+    dialogue_percentage = round((len(character_lines) / max(len(dialogue_lines), 1)) * 100, 2)
+    return {
+        "estimated_episode_duration": round(estimated_duration, 2),
+        "dialogue_percentage": dialogue_percentage,
+        "line_count": len(dialogue_lines),
+    }
 
 
 def _mix_audio_clips(clips: list[Path], output_path: Path) -> bool:

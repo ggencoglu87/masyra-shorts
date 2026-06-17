@@ -181,7 +181,7 @@ class AIMovieEngineV4Tests(unittest.TestCase):
             video_dir = self._package(Path(tmp))
             image_dir = video_dir / "scene-images"
             image_dir.mkdir()
-            for index in range(1, 5):
+            for index in range(1, 6):
                 (image_dir / f"scene-{index:02d}.png").write_bytes(b"fake-png")
 
             requests = []
@@ -218,8 +218,8 @@ class AIMovieEngineV4Tests(unittest.TestCase):
                     result = generate_ai_videos_for_package(video_dir, provider_name="replicate", force=True)
 
             self.assertEqual(result["provider"], "replicate")
-            self.assertEqual(result["generated_count"], 4)
-            self.assertEqual(result["real_ai_scene_count"], 4)
+            self.assertEqual(result["generated_count"], 5)
+            self.assertEqual(result["real_ai_scene_count"], 5)
             self.assertEqual(result["image_motion_scene_count"], 0)
             self.assertEqual(result["failed_count"], 0)
             self.assertTrue(result["ai_movie_ready"])
@@ -524,11 +524,11 @@ class AIMovieEngineV4Tests(unittest.TestCase):
 
             scene_dir = video_dir / "scene-videos"
             saved = json.loads((video_dir / "ai-video-result.json").read_text(encoding="utf-8"))
-            scene_exists = {index: (scene_dir / f"scene-{index:02d}.mp4").exists() for index in range(1, 5)}
+            scene_exists = {index: (scene_dir / f"scene-{index:02d}.mp4").exists() for index in range(1, 6)}
 
         self.assertEqual(provider.scene_ids, [3])
         self.assertEqual(result["selected_scene"], 3)
-        self.assertEqual(result["scene_count"], 4)
+        self.assertEqual(result["scene_count"], 5)
         self.assertEqual(result["generated_count"], 1)
         self.assertEqual(result["real_ai_scene_count"], 1)
         self.assertEqual(result["scenes"][0]["scene"], 3)
@@ -537,6 +537,7 @@ class AIMovieEngineV4Tests(unittest.TestCase):
         self.assertFalse(scene_exists[2])
         self.assertTrue(scene_exists[3])
         self.assertFalse(scene_exists[4])
+        self.assertFalse(scene_exists[5])
 
     def test_generate_ai_video_scene_flag_is_passed_from_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -603,7 +604,7 @@ class AIMovieEngineV4Tests(unittest.TestCase):
             video_dir = self._package(Path(tmp))
             image_dir = video_dir / "scene-images"
             image_dir.mkdir()
-            for index in range(1, 5):
+            for index in range(1, 6):
                 (image_dir / f"scene-{index:02d}.png").write_bytes(b"fake-png")
 
             def fake_run(command, capture_output=True, text=True, timeout=90):
@@ -617,14 +618,14 @@ class AIMovieEngineV4Tests(unittest.TestCase):
 
             status = json.loads((video_dir / "providers-status.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(result["generated_count"], 4)
+        self.assertEqual(result["generated_count"], 5)
         self.assertEqual(result["real_ai_scene_count"], 0)
-        self.assertEqual(result["image_motion_scene_count"], 4)
+        self.assertEqual(result["image_motion_scene_count"], 5)
         self.assertFalse(result["ai_movie_ready"])
         self.assertEqual(result["scenes"][0]["provider"], fallback_provider)
         self.assertEqual(result["scenes"][0]["scene_type"], "image_motion")
         self.assertEqual(status["providers"]["replicate"]["configured"], False)
-        self.assertEqual(status["providers"][fallback_provider]["success_count"], 4)
+        self.assertEqual(status["providers"][fallback_provider]["success_count"], 5)
         self.assertNotIn("image_path", json.dumps(result))
 
     def test_v5_auto_provider_chain_falls_back_and_writes_provider_status(self) -> None:
@@ -632,7 +633,7 @@ class AIMovieEngineV4Tests(unittest.TestCase):
             video_dir = self._package(Path(tmp))
             image_dir = video_dir / "scene-images"
             image_dir.mkdir()
-            for index in range(1, 5):
+            for index in range(1, 6):
                 (image_dir / f"scene-{index:02d}.png").write_bytes(b"fake-png")
 
             def fake_urlopen(request, timeout=120):
@@ -658,14 +659,14 @@ class AIMovieEngineV4Tests(unittest.TestCase):
 
         self.assertEqual(result["provider_priority"][:3], ["veo3", "runway", "replicate"])
         self.assertTrue(result["ai_movie_ready"])
-        self.assertEqual(result["generated_count"], 4)
-        self.assertEqual(result["real_ai_scene_count"], 4)
+        self.assertEqual(result["generated_count"], 5)
+        self.assertEqual(result["real_ai_scene_count"], 5)
         self.assertEqual(result["image_motion_scene_count"], 0)
         first_scene_chain = [attempt["provider"] for attempt in result["scenes"][0]["fallback_chain"]]
         self.assertEqual(first_scene_chain, ["veo3", "runway", "replicate"])
-        self.assertEqual(status["providers"]["veo3"]["failure_count"], 4)
-        self.assertEqual(status["providers"]["runway"]["failure_count"], 4)
-        self.assertEqual(status["providers"]["replicate"]["success_count"], 4)
+        self.assertEqual(status["providers"]["veo3"]["failure_count"], 5)
+        self.assertEqual(status["providers"]["runway"]["failure_count"], 5)
+        self.assertEqual(status["providers"]["replicate"]["success_count"], 5)
 
     def test_quality_rejects_stock_only_as_full_ai_movie(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -747,22 +748,45 @@ class AIMovieEngineV4Tests(unittest.TestCase):
                 encoding="utf-8",
             )
             (video_dir / "tts-result.json").write_text(
-                json.dumps({"audio_matches_current_text": True, "mixed_voiceover_ready": False}),
+                json.dumps(
+                    {
+                        "audio_matches_current_text": True,
+                        "mixed_voiceover_ready": False,
+                        "estimated_episode_duration": 30,
+                        "dialogue_percentage": 75,
+                        "dialogue_line_count": 20,
+                        "speaker_count": 3,
+                    }
+                ),
                 encoding="utf-8",
             )
             missing_mix = score_video_package(video_dir)
             (video_dir / "tts-result.json").write_text(
-                json.dumps({"audio_matches_current_text": True, "mixed_voiceover_ready": True}),
+                json.dumps(
+                    {
+                        "audio_matches_current_text": True,
+                        "mixed_voiceover_ready": True,
+                        "estimated_episode_duration": 30,
+                        "dialogue_percentage": 75,
+                        "dialogue_line_count": 20,
+                        "speaker_count": 3,
+                    }
+                ),
                 encoding="utf-8",
             )
-            (video_dir / "captions.json").write_text(json.dumps([{"speaker": "BOB", "word": "BOB: HI"}]), encoding="utf-8")
+            (video_dir / "captions.json").write_text(json.dumps([{"speaker": "BOB", "word": "HI"}]), encoding="utf-8")
             ready = score_video_package(video_dir)
+            quality_result = json.loads((video_dir / "quality-result.json").read_text(encoding="utf-8"))
 
         self.assertFalse(missing_mix["publish_ready"])
         self.assertFalse(missing_mix["requirements"]["mixed_voiceover_mp3"])
         self.assertTrue(ready["publish_ready"])
         self.assertTrue(ready["requirements"]["mixed_voiceover_mp3"])
         self.assertTrue(ready["requirements"]["captions"])
+        self.assertTrue(ready["requirements"]["caption_validation"])
+        self.assertTrue(ready["requirements"]["line_count_20_plus"])
+        self.assertEqual(quality_result["line_count"], 20)
+        self.assertEqual(quality_result["estimated_duration"], 30)
 
     def test_final_renderer_blocks_image_only_without_real_ai_video(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
