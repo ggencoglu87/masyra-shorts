@@ -31,7 +31,8 @@ def render_video_package(
     preview: bool = False,
 ) -> dict:
     video_dir = video_dir.resolve()
-    scene_type_counts = _scene_type_counts(video_dir)
+    detected_existing_ai = detect_existing_ai_scene_videos(video_dir)
+    scene_type_counts = _scene_type_counts(video_dir, detected=detected_existing_ai)
     if not ffmpeg_available():
         return {
             "video_dir": str(video_dir),
@@ -53,7 +54,7 @@ def render_video_package(
         return _failed(video_dir, "video-plan.json not found")
 
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    ai_video_paths = _ai_scene_video_paths(video_dir)
+    ai_video_paths = _ai_scene_video_paths(video_dir, detected=detected_existing_ai)
     if len(ai_video_paths) >= 4:
         return _render_ai_scene_video(
             video_dir=video_dir,
@@ -479,8 +480,8 @@ def _video_clip_paths(video_dir: Path) -> list[Path]:
     return clips[:8]
 
 
-def _ai_scene_video_paths(video_dir: Path) -> list[Path]:
-    detected = detect_existing_ai_scene_videos(video_dir)
+def _ai_scene_video_paths(video_dir: Path, detected: dict | None = None) -> list[Path]:
+    detected = detected or detect_existing_ai_scene_videos(video_dir)
     if detected["real_ai_scene_count"] < 4:
         return []
     return [Path(path) for path in detected["paths"][:8]]
@@ -495,8 +496,22 @@ def detect_existing_ai_scene_videos(video_dir: Path) -> dict:
     known_ai_provider = provider in {"replicate", "veo", "veo3", "veo3fast", "runway", "kling", "pixverse", "hailuo"}
 
     ai_entries = []
+    if len(existing_files) >= 4:
+        ai_entries = [
+            {
+                "scene": index,
+                "scene_type": "ai_video",
+                "provider": "existing_ai_scene_videos",
+                "source_provider": provider,
+                "file": path.relative_to(video_dir).as_posix(),
+            }
+            for index, path in enumerate(existing_files, start=1)
+        ]
+        provider = "existing_ai_scene_videos"
     for scene in scenes:
         if not isinstance(scene, dict):
+            continue
+        if ai_entries:
             continue
         if scene.get("scene_type") != "ai_video":
             continue
@@ -532,6 +547,7 @@ def detect_existing_ai_scene_videos(video_dir: Path) -> dict:
         "provider": provider,
         "scene_type": "ai_video" if real_ai_count else None,
         "real_ai_scene_count": real_ai_count,
+        "detected_existing_ai_scene_count": len(existing_files),
         "image_motion_scene_count": image_motion_count,
         "image_only_scene_count": image_only_count,
         "ai_movie_ready": bool(result.get("ai_movie_ready") or real_ai_count >= 4),
@@ -540,9 +556,9 @@ def detect_existing_ai_scene_videos(video_dir: Path) -> dict:
     }
 
 
-def _scene_type_counts(video_dir: Path, image_only_override: int | None = None) -> dict:
+def _scene_type_counts(video_dir: Path, image_only_override: int | None = None, detected: dict | None = None) -> dict:
     result = load_ai_video_result(video_dir)
-    detected = detect_existing_ai_scene_videos(video_dir)
+    detected = detected or detect_existing_ai_scene_videos(video_dir)
     real_ai = int(detected.get("real_ai_scene_count", 0) or result.get("real_ai_scene_count", 0) or 0)
     image_motion = int(result.get("image_motion_scene_count", 0) or 0)
     image_only = int(result.get("image_only_scene_count", 0) or 0)
@@ -562,6 +578,7 @@ def _scene_type_counts(video_dir: Path, image_only_override: int | None = None) 
         image_only = max(image_only, image_only_override)
     return {
         "real_ai_scene_count": real_ai,
+        "detected_existing_ai_scene_count": int(detected.get("detected_existing_ai_scene_count", 0) or 0),
         "image_motion_scene_count": image_motion,
         "image_only_scene_count": image_only,
         "ai_video_provider": detected.get("provider") or result.get("provider"),

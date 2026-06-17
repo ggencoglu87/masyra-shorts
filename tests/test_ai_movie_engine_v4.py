@@ -838,11 +838,12 @@ class AIMovieEngineV4Tests(unittest.TestCase):
         self.assertTrue(final_exists)
         self.assertTrue(result["ai_scene_videos_used"])
         self.assertEqual(result["real_ai_scene_count"], 5)
-        self.assertEqual(result["ai_video_provider"], "replicate")
+        self.assertEqual(result["detected_existing_ai_scene_count"], 5)
+        self.assertEqual(result["ai_video_provider"], "existing_ai_scene_videos")
         self.assertEqual(saved_metadata["real_ai_scene_count"], 5)
         self.assertEqual(saved_metadata["provider"], "replicate")
 
-    def test_detect_existing_ai_scene_videos_recovers_stale_zero_count(self) -> None:
+    def test_render_video_recovers_stale_zero_count_from_existing_scene_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             video_dir = self._package(Path(tmp))
             scene_dir = video_dir / "scene-videos"
@@ -852,7 +853,7 @@ class AIMovieEngineV4Tests(unittest.TestCase):
             (video_dir / "ai-video-result.json").write_text(
                 json.dumps(
                     {
-                        "provider": "replicate",
+                        "provider": "off",
                         "real_ai_scene_count": 0,
                         "image_motion_scene_count": 0,
                         "image_only_scene_count": 0,
@@ -863,12 +864,29 @@ class AIMovieEngineV4Tests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            def fake_run(command, capture_output=True, text=True, timeout=300):
+                output = Path(command[-1])
+                output.write_bytes(b"rendered")
+                return SimpleNamespace(returncode=0, stderr="")
+
             detected = detect_existing_ai_scene_videos(video_dir)
+            with patch("shorts_automation.renderer.ffmpeg_available", return_value=True):
+                with patch("shorts_automation.renderer.subprocess.run", side_effect=fake_run):
+                    result = render_video_package(video_dir, preview=False)
+            final_exists = (video_dir / "final.mp4").exists()
+            saved_metadata = json.loads((video_dir / "ai-video-result.json").read_text(encoding="utf-8"))
 
         self.assertEqual(detected["scene_type"], "ai_video")
-        self.assertEqual(detected["provider"], "replicate")
+        self.assertEqual(detected["provider"], "existing_ai_scene_videos")
         self.assertEqual(detected["real_ai_scene_count"], 5)
         self.assertTrue(detected["ai_movie_ready"])
+        self.assertTrue(result["rendered"])
+        self.assertTrue(final_exists)
+        self.assertEqual(result["real_ai_scene_count"], 5)
+        self.assertEqual(result["detected_existing_ai_scene_count"], 5)
+        self.assertTrue(result["ai_movie_ready"])
+        self.assertEqual(saved_metadata["real_ai_scene_count"], 0)
+        self.assertEqual(saved_metadata["provider"], "off")
 
 
 if __name__ == "__main__":
