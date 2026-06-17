@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .ai_video import ai_scene_videos_available, load_ai_video_result
+from .ai_video import load_ai_video_result
 from .stock_videos import load_clip_manifest, load_clip_result, video_clips_available
 from .visuals import load_scene_manifest, visuals_available
 
@@ -480,26 +480,75 @@ def _video_clip_paths(video_dir: Path) -> list[Path]:
 
 
 def _ai_scene_video_paths(video_dir: Path) -> list[Path]:
-    if not ai_scene_videos_available(video_dir):
+    detected = detect_existing_ai_scene_videos(video_dir)
+    if detected["real_ai_scene_count"] < 4:
         return []
+    return [Path(path) for path in detected["paths"][:8]]
+
+
+def detect_existing_ai_scene_videos(video_dir: Path) -> dict:
     result = load_ai_video_result(video_dir)
-    videos = []
-    for scene in result.get("scenes", []):
+    scene_dir = video_dir / "scene-videos"
+    existing_files = sorted(scene_dir.glob("scene-*.mp4")) if scene_dir.exists() else []
+    scenes = result.get("scenes", []) if isinstance(result.get("scenes"), list) else []
+    provider = result.get("provider") or _provider_from_scenes(scenes) or "unknown"
+    known_ai_provider = provider in {"replicate", "veo", "veo3", "veo3fast", "runway", "kling", "pixverse", "hailuo"}
+
+    ai_entries = []
+    for scene in scenes:
+        if not isinstance(scene, dict):
+            continue
         if scene.get("scene_type") != "ai_video":
             continue
-        if not scene.get("file"):
-            continue
-        path = video_dir / scene["file"]
-        if path.exists():
-            videos.append(path)
-    return videos[:8]
+        file_value = scene.get("file")
+        if file_value and (video_dir / file_value).exists():
+            ai_entries.append({**scene, "scene_type": "ai_video"})
+
+    recorded_real_ai = int(result.get("real_ai_scene_count", 0) or 0)
+    should_infer_ai = bool(existing_files and (recorded_real_ai >= 4 or result.get("ai_movie_ready") or known_ai_provider))
+    if not ai_entries and should_infer_ai:
+        ai_entries = [
+            {
+                "scene": index,
+                "scene_type": "ai_video",
+                "provider": provider,
+                "file": path.relative_to(video_dir).as_posix(),
+            }
+            for index, path in enumerate(existing_files, start=1)
+        ]
+
+    paths = []
+    for scene in ai_entries:
+        file_value = scene.get("file")
+        if file_value:
+            path = video_dir / file_value
+            if path.exists():
+                paths.append(path)
+
+    real_ai_count = max(recorded_real_ai if paths else 0, len(paths))
+    image_motion_count = 0 if real_ai_count >= 4 else int(result.get("image_motion_scene_count", 0) or 0)
+    image_only_count = 0 if real_ai_count >= 4 else int(result.get("image_only_scene_count", 0) or 0)
+    return {
+        "provider": provider,
+        "scene_type": "ai_video" if real_ai_count else None,
+        "real_ai_scene_count": real_ai_count,
+        "image_motion_scene_count": image_motion_count,
+        "image_only_scene_count": image_only_count,
+        "ai_movie_ready": bool(result.get("ai_movie_ready") or real_ai_count >= 4),
+        "paths": [str(path) for path in paths],
+        "scenes": ai_entries,
+    }
 
 
 def _scene_type_counts(video_dir: Path, image_only_override: int | None = None) -> dict:
     result = load_ai_video_result(video_dir)
-    real_ai = int(result.get("real_ai_scene_count", 0) or 0)
+    detected = detect_existing_ai_scene_videos(video_dir)
+    real_ai = int(detected.get("real_ai_scene_count", 0) or result.get("real_ai_scene_count", 0) or 0)
     image_motion = int(result.get("image_motion_scene_count", 0) or 0)
     image_only = int(result.get("image_only_scene_count", 0) or 0)
+    if real_ai >= 4:
+        image_motion = int(detected.get("image_motion_scene_count", 0) or 0)
+        image_only = int(detected.get("image_only_scene_count", 0) or 0)
     if not any([real_ai, image_motion, image_only]):
         for scene in result.get("scenes", []):
             scene_type = scene.get("scene_type")
@@ -515,7 +564,16 @@ def _scene_type_counts(video_dir: Path, image_only_override: int | None = None) 
         "real_ai_scene_count": real_ai,
         "image_motion_scene_count": image_motion,
         "image_only_scene_count": image_only,
+        "ai_video_provider": detected.get("provider") or result.get("provider"),
+        "ai_movie_ready": bool(detected.get("ai_movie_ready") or result.get("ai_movie_ready")),
     }
+
+
+def _provider_from_scenes(scenes: list[dict]) -> str | None:
+    for scene in scenes:
+        if isinstance(scene, dict) and scene.get("provider"):
+            return str(scene["provider"])
+    return None
 
 
 def _scene_images(video_dir: Path) -> list[Path]:

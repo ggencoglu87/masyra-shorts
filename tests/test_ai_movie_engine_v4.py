@@ -18,7 +18,7 @@ from shorts_automation.cli import main as cli_main  # noqa: E402
 from shorts_automation.dashboard import build_package_rows  # noqa: E402
 from shorts_automation.planner import build_daily_network_plan, write_video_packages  # noqa: E402
 from shorts_automation.quality import score_video_package  # noqa: E402
-from shorts_automation.renderer import render_video_package  # noqa: E402
+from shorts_automation.renderer import detect_existing_ai_scene_videos, render_video_package  # noqa: E402
 from shorts_automation.status_store import StatusStore  # noqa: E402
 
 
@@ -802,6 +802,73 @@ class AIMovieEngineV4Tests(unittest.TestCase):
 
         self.assertFalse(result["rendered"])
         self.assertIn("requires real AI generated scene videos", result["warning"])
+
+    def test_render_video_uses_existing_replicate_ai_scene_videos(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            scene_dir = video_dir / "scene-videos"
+            scene_dir.mkdir()
+            for index in range(1, 6):
+                (scene_dir / f"scene-{index:02d}.mp4").write_bytes(b"mp4")
+            original_metadata = {
+                "provider": "replicate",
+                "real_ai_scene_count": 5,
+                "image_motion_scene_count": 0,
+                "image_only_scene_count": 0,
+                "ai_movie_ready": True,
+                "scenes": [
+                    {"scene": index, "scene_type": "ai_video", "provider": "replicate", "file": f"scene-videos/scene-{index:02d}.mp4"}
+                    for index in range(1, 6)
+                ],
+            }
+            (video_dir / "ai-video-result.json").write_text(json.dumps(original_metadata), encoding="utf-8")
+
+            def fake_run(command, capture_output=True, text=True, timeout=300):
+                output = Path(command[-1])
+                output.write_bytes(b"rendered")
+                return SimpleNamespace(returncode=0, stderr="")
+
+            with patch("shorts_automation.renderer.ffmpeg_available", return_value=True):
+                with patch("shorts_automation.renderer.subprocess.run", side_effect=fake_run):
+                    result = render_video_package(video_dir, preview=False)
+            final_exists = (video_dir / "final.mp4").exists()
+            saved_metadata = json.loads((video_dir / "ai-video-result.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(result["rendered"])
+        self.assertTrue(final_exists)
+        self.assertTrue(result["ai_scene_videos_used"])
+        self.assertEqual(result["real_ai_scene_count"], 5)
+        self.assertEqual(result["ai_video_provider"], "replicate")
+        self.assertEqual(saved_metadata["real_ai_scene_count"], 5)
+        self.assertEqual(saved_metadata["provider"], "replicate")
+
+    def test_detect_existing_ai_scene_videos_recovers_stale_zero_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = self._package(Path(tmp))
+            scene_dir = video_dir / "scene-videos"
+            scene_dir.mkdir()
+            for index in range(1, 6):
+                (scene_dir / f"scene-{index:02d}.mp4").write_bytes(b"mp4")
+            (video_dir / "ai-video-result.json").write_text(
+                json.dumps(
+                    {
+                        "provider": "replicate",
+                        "real_ai_scene_count": 0,
+                        "image_motion_scene_count": 0,
+                        "image_only_scene_count": 0,
+                        "ai_movie_ready": False,
+                        "scenes": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            detected = detect_existing_ai_scene_videos(video_dir)
+
+        self.assertEqual(detected["scene_type"], "ai_video")
+        self.assertEqual(detected["provider"], "replicate")
+        self.assertEqual(detected["real_ai_scene_count"], 5)
+        self.assertTrue(detected["ai_movie_ready"])
 
 
 if __name__ == "__main__":
