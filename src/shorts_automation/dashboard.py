@@ -496,13 +496,14 @@ def dashboard_asset_status(video_dir: Path) -> dict:
     real_openai_visuals_ready = bool(visual_result.get("real_visuals_ready"))
     placeholder_visuals = _placeholder_visuals(scene_manifest, visual_result)
     audio_ready = bool(tts_result.get("audio_matches_current_text") and tts_result.get("mixed_voiceover_ready", (video_dir / "voiceover.mp3").exists()))
-    estimated_episode_duration = float(tts_result.get("estimated_episode_duration") or _storyboard_duration(video_dir) or 0)
+    estimated_episode_duration = float(tts_result.get("estimated_duration") or tts_result.get("estimated_episode_duration") or _storyboard_duration(video_dir) or 0)
+    actual_audio_duration = _actual_audio_duration(tts_result)
     dialogue_percentage = float(tts_result.get("dialogue_percentage") or _dialogue_percentage(video_dir) or 0)
     dialogue_line_count = int(tts_result.get("dialogue_line_count") or _dialogue_line_count(video_dir) or 0)
     speaker_count = int(tts_result.get("speaker_count") or len(tts_result.get("voices_used", [])) or _speaker_count(video_dir) or 0)
     provider_used = tts_result.get("provider_used") or tts_result.get("provider")
     min_lines_pass = dialogue_line_count >= 20
-    min_duration_pass = estimated_episode_duration >= 25
+    min_duration_pass = actual_audio_duration is not None and 25 <= actual_audio_duration <= 35
     caption_validation_pass = _caption_validation(video_dir)
     ai_movie_ready = bool(
         ai_videos_ready
@@ -546,6 +547,8 @@ def dashboard_asset_status(video_dir: Path) -> dict:
         "voices_used": tts_result.get("voices_used", []),
         "speaker_count": speaker_count,
         "estimated_episode_duration": estimated_episode_duration,
+        "estimated_duration": estimated_episode_duration,
+        "actual_audio_duration": actual_audio_duration,
         "dialogue_percentage": dialogue_percentage,
         "dialogue_line_count": dialogue_line_count,
         "min_lines_pass": min_lines_pass,
@@ -656,7 +659,8 @@ def asset_status_section(status: dict) -> str:
       {score_box("Voice Separation", status.get("voice_separation_mode", "single"))}
       {score_box("Voices Used", ", ".join(status.get("voices_used", [])) or "missing")}
       {score_box("Speaker Count", status.get("speaker_count", 0))}
-      {score_box("Est. Duration", f"{status.get('estimated_episode_duration', 0)}s")}
+      {score_box("Est. Duration", f"{status.get('estimated_duration', status.get('estimated_episode_duration', 0))}s")}
+      {score_box("Actual Audio", f"{status.get('actual_audio_duration', 'missing')}s")}
       {score_box("Dialogue %", f"{status.get('dialogue_percentage', 0)}%")}
       {score_box("Dialogue Lines", status.get("dialogue_line_count", 0))}
       {score_box("Min Lines", "PASS" if status.get("min_lines_pass") else "FAIL")}
@@ -839,6 +843,15 @@ def _caption_validation(video_dir: Path) -> bool:
         if not word or ":" in word:
             return False
     return True
+
+
+def _actual_audio_duration(tts_result: dict) -> float | None:
+    if tts_result.get("actual_audio_duration") is None:
+        return None
+    try:
+        return round(float(tts_result["actual_audio_duration"]), 2)
+    except (TypeError, ValueError):
+        return None
 
 
 def _storyboard_dialogue_lines(video_dir: Path) -> list[dict]:

@@ -51,7 +51,16 @@ class DashboardStatusTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (video_dir / "tts-result.json").write_text(
-                json.dumps({"requested_provider": "elevenlabs", "provider_used": "piper", "audio_matches_current_text": True, "mixed_voiceover_ready": True}),
+                json.dumps(
+                    {
+                        "requested_provider": "elevenlabs",
+                        "provider_used": "piper",
+                        "audio_matches_current_text": True,
+                        "mixed_voiceover_ready": True,
+                        "estimated_duration": 30,
+                        "actual_audio_duration": 30,
+                    }
+                ),
                 encoding="utf-8",
             )
             (video_dir / "voiceover.mp3").write_bytes(b"audio")

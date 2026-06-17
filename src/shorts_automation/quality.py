@@ -22,11 +22,12 @@ def score_video_package(video_dir: Path) -> dict:
     has_mixed_audio = bool(has_audio and (tts_result.get("mixed_voiceover_ready", has_audio)) and tts_result.get("audio_matches_current_text", has_audio))
     has_captions = (video_dir / "captions.json").exists() and bool(_read_json(video_dir / "captions.json"))
     captions_clean = _captions_have_clean_words(video_dir)
-    estimated_episode_duration = float(tts_result.get("estimated_episode_duration") or _storyboard_duration(video_dir) or 0)
+    estimated_episode_duration = float(tts_result.get("estimated_duration") or tts_result.get("estimated_episode_duration") or _storyboard_duration(video_dir) or 0)
+    actual_audio_duration = _actual_audio_duration(video_dir, tts_result)
     dialogue_percentage = float(tts_result.get("dialogue_percentage") or _dialogue_percentage(video_dir) or 0)
     dialogue_line_count = int(tts_result.get("dialogue_line_count") or _dialogue_line_count(video_dir) or 0)
     speaker_count = int(tts_result.get("speaker_count") or len(tts_result.get("voices_used", [])) or _speaker_count(video_dir) or 0)
-    duration_ready = estimated_episode_duration >= 25
+    duration_ready = actual_audio_duration is not None and 25 <= actual_audio_duration <= 35
     dialogue_ready = dialogue_percentage >= 30
     line_count_ready = dialogue_line_count >= 20
     has_final = (video_dir / "final.mp4").exists()
@@ -84,6 +85,7 @@ def score_video_package(video_dir: Path) -> dict:
         "audio_score": audio_score,
         "estimated_episode_duration": estimated_episode_duration,
         "estimated_duration": estimated_episode_duration,
+        "actual_audio_duration": actual_audio_duration,
         "dialogue_percentage": dialogue_percentage,
         "dialogue_line_count": dialogue_line_count,
         "line_count": dialogue_line_count,
@@ -104,7 +106,7 @@ def score_video_package(video_dir: Path) -> dict:
             "mixed_voiceover_mp3": has_mixed_audio,
             "captions": has_captions,
             "caption_validation": captions_clean,
-            "duration_25_plus": duration_ready,
+            "actual_audio_duration_25_to_35": duration_ready,
             "dialogue_percentage_30_plus": dialogue_ready,
             "line_count_20_plus": line_count_ready,
             "speaker_count": speaker_count,
@@ -208,3 +210,12 @@ def _dialogue_line_count(video_dir: Path) -> int:
         if isinstance(scene, dict):
             count += len([line for line in scene.get("dialogue", []) if isinstance(line, dict) and line.get("line")])
     return count
+
+
+def _actual_audio_duration(video_dir: Path, tts_result: dict) -> float | None:
+    if tts_result.get("actual_audio_duration") is not None:
+        try:
+            return float(tts_result["actual_audio_duration"])
+        except (TypeError, ValueError):
+            return None
+    return None

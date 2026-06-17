@@ -21,6 +21,16 @@ DEFAULT_ELEVENLABS_MODEL_ID = "eleven_multilingual_v2"
 DEFAULT_PIPER_MODEL_PATH = "/opt/masyra-shorts/models/piper/en_US-lessac-medium.onnx"
 DEFAULT_GOOGLE_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 DEFAULT_GOOGLE_TTS_VOICE = "Puck"
+MIN_AUDIO_DURATION_SECONDS = 25.0
+MAX_AUDIO_DURATION_SECONDS = 35.0
+TARGET_AUDIO_DURATION_SECONDS = 30.0
+PROVIDER_WORDS_PER_SECOND = {
+    "piper": 3.05,
+    "google_ai_studio": 3.25,
+    "google": 3.25,
+    "elevenlabs": 3.15,
+    "mock": 4.2,
+}
 
 
 class TTSProvider:
@@ -56,7 +66,7 @@ class MockTTSProvider(TTSProvider):
         self.reason = reason
 
     def synthesize(self, text: str, output_path: Path) -> dict:
-        _write_mock_audio(output_path, text)
+        _write_mock_audio(output_path, text, seed_text=text)
         status_path = output_path.with_suffix(".mock.json")
         status_path.write_text(
             json.dumps(
@@ -80,7 +90,13 @@ class MockTTSProvider(TTSProvider):
 
     def synthesize_voice(self, text: str, output_path: Path, voice_profile: dict) -> dict:
         voice_seed = f"{voice_profile.get('voice_id') or output_path.stem}: {voice_profile.get('speaking_style', '')}: {text}"
-        result = self.synthesize(voice_seed, output_path)
+        _write_mock_audio(output_path, text, seed_text=voice_seed)
+        result = {
+            "provider": self.name,
+            "created": True,
+            "output": str(output_path),
+            "warning": self.reason,
+        }
         result["voice_id"] = voice_profile.get("voice_id")
         result["voice_separation"] = "mock_voice_seed"
         return result
@@ -359,6 +375,18 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
 
     text = voiceover_text.read_text(encoding="utf-8").strip()
     voice_profile = _read_json(video_dir / "voice_profile.json")
+    dialogue_lines = _parse_dialogue_script(text)
+    calibration = {}
+    if dialogue_lines:
+        dialogue_lines, calibration = _calibrate_dialogue_lines(dialogue_lines, provider_name)
+        calibrated_text = _format_dialogue_script(dialogue_lines)
+        if calibrated_text != text:
+            voiceover_text.write_text(calibrated_text, encoding="utf-8")
+            text = calibrated_text
+            _write_dialogue_captions(video_dir, dialogue_lines, float(calibration.get("estimated_duration") or TARGET_AUDIO_DURATION_SECONDS))
+    else:
+        text, calibration = _calibrate_plain_text(text, provider_name)
+        voiceover_text.write_text(text, encoding="utf-8")
     source_text_hash = _text_hash(text)
     previous = _read_json(result_path)
     previous_hash = previous.get("source_text_hash")
@@ -413,7 +441,6 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
         }
         return _write_tts_result(video_dir, result_path, result, force=force)
 
-    dialogue_lines = _parse_dialogue_script(text)
     if dialogue_lines:
         return _synthesize_multi_voiceover(
             video_dir=video_dir,
@@ -425,6 +452,8 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
             source_text_hash=source_text_hash,
             stale_audio_warning=stale_audio_warning,
             force=force,
+            calibration=calibration,
+            actual_calibration_attempted=False,
         )
 
     attempts = []
@@ -468,6 +497,15 @@ def synthesize_voiceover(video_dir: Path, provider_name: str, force: bool = Fals
                 "voice_profile": voice_profile,
                 "fallback_attempts": attempts,
             }
+            estimated_duration = _estimate_plain_text_duration(text, provider.name)
+            actual_duration = _audio_duration_seconds(output_path) or estimated_duration
+            result["estimated_duration"] = round(estimated_duration, 2)
+            result["estimated_episode_duration"] = round(estimated_duration, 2)
+            result["actual_audio_duration"] = round(actual_duration, 2)
+            result["duration_target_seconds"] = TARGET_AUDIO_DURATION_SECONDS
+            result["duration_range_seconds"] = [MIN_AUDIO_DURATION_SECONDS, MAX_AUDIO_DURATION_SECONDS]
+            result["duration_calibration"] = calibration
+            result["speech_rate_profile"] = provider.name
             break
 
     if not result.get("created"):
@@ -576,6 +614,8 @@ def _synthesize_multi_voiceover(
     source_text_hash: str,
     stale_audio_warning: str | None,
     force: bool,
+    calibration: dict | None = None,
+    actual_calibration_attempted: bool = False,
 ) -> dict:
     audio_dir = video_dir / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
@@ -662,6 +702,25 @@ def _synthesize_multi_voiceover(
     voices_used = sorted({clip["speaker_id"] for clip in clips})
     character_voices = [voice for voice in voices_used if voice != "narrator"]
     metrics = _dialogue_metrics(video_dir, dialogue_lines)
+    actual_duration = _mixed_audio_duration(video_dir, output_path, clips, providers_used[0] if providers_used else provider_name)
+    if mixed and output_path.exists() and not actual_calibration_attempted and actual_duration and not _duration_in_range(actual_duration):
+        adjusted_lines, actual_calibration = _calibrate_dialogue_lines(dialogue_lines, providers_used[0] if providers_used else provider_name, actual_duration=actual_duration)
+        calibrated_text = _format_dialogue_script(adjusted_lines)
+        (video_dir / "voiceover.txt").write_text(calibrated_text, encoding="utf-8")
+        _write_dialogue_captions(video_dir, adjusted_lines, float(actual_calibration.get("estimated_duration") or TARGET_AUDIO_DURATION_SECONDS))
+        return _synthesize_multi_voiceover(
+            video_dir=video_dir,
+            provider_name=provider_name,
+            providers=providers,
+            dialogue_lines=adjusted_lines,
+            output_path=output_path,
+            result_path=result_path,
+            source_text_hash=_text_hash(calibrated_text),
+            stale_audio_warning="Audio duration was outside 25-35s; narration and dialogue were automatically calibrated.",
+            force=True,
+            calibration=actual_calibration,
+            actual_calibration_attempted=True,
+        )
     separation_modes = sorted({str(attempt.get("voice_separation")) for attempt in attempts if attempt.get("voice_separation")})
     result = {
         "requested_provider": provider_name,
@@ -681,6 +740,12 @@ def _synthesize_multi_voiceover(
         "voices_used": voices_used,
         "speaker_count": len(voices_used),
         "estimated_episode_duration": metrics["estimated_episode_duration"],
+        "estimated_duration": metrics["estimated_episode_duration"],
+        "actual_audio_duration": round(actual_duration, 2) if actual_duration else None,
+        "duration_target_seconds": TARGET_AUDIO_DURATION_SECONDS,
+        "duration_range_seconds": [MIN_AUDIO_DURATION_SECONDS, MAX_AUDIO_DURATION_SECONDS],
+        "duration_calibration": calibration or {},
+        "speech_rate_profile": providers_used[0] if providers_used else provider_name,
         "dialogue_percentage": metrics["dialogue_percentage"],
         "dialogue_line_count": metrics["line_count"],
         "voice_separation_mode": ", ".join(separation_modes) or "shared_provider_settings",
@@ -731,22 +796,227 @@ def _dialogue_metrics(video_dir: Path, dialogue_lines: list[dict]) -> dict:
     }
 
 
+def _calibrate_dialogue_lines(dialogue_lines: list[dict], provider_name: str, actual_duration: float | None = None) -> tuple[list[dict], dict]:
+    provider = _normalize_provider_name(provider_name)
+    estimated = actual_duration or _estimate_dialogue_duration(dialogue_lines, provider)
+    calibrated = [dict(line) for line in dialogue_lines]
+    changed = False
+    action = "none"
+    if estimated > MAX_AUDIO_DURATION_SECONDS:
+        calibrated = _shorten_dialogue(calibrated, TARGET_AUDIO_DURATION_SECONDS / estimated)
+        changed = True
+        action = "shortened"
+    elif estimated < MIN_AUDIO_DURATION_SECONDS:
+        calibrated = _expand_dialogue(calibrated, provider)
+        changed = True
+        action = "expanded"
+    calibrated_estimate = _estimate_dialogue_duration(calibrated, provider)
+    return calibrated, {
+        "changed": changed,
+        "action": action,
+        "provider": provider,
+        "speech_rate_words_per_second": _speech_rate(provider),
+        "estimated_before": round(estimated, 2),
+        "estimated_duration": round(calibrated_estimate, 2),
+    }
+
+
+def _shorten_dialogue(dialogue_lines: list[dict], ratio: float) -> list[dict]:
+    for line in dialogue_lines:
+        words = _words(line.get("line", ""))
+        keep = max(2, min(len(words), int(len(words) * max(0.35, ratio))))
+        line["line"] = _restore_sentence(words[:keep])
+    return dialogue_lines
+
+
+def _expand_dialogue(dialogue_lines: list[dict], provider_name: str) -> list[dict]:
+    reactions = [
+        "Nobody moved for a second.",
+        "Then everything got worse.",
+        "That was the moment they understood.",
+        "The room went completely quiet.",
+        "One tiny detail changed the whole story.",
+    ]
+    character_speakers = [line.get("speaker_id") for line in dialogue_lines if line.get("speaker_id") and line.get("speaker_id") != "narrator"]
+    fallback_speakers = character_speakers or [line.get("speaker_id", "narrator") for line in dialogue_lines]
+    index = 0
+    while _estimate_dialogue_duration(dialogue_lines, provider_name) < MIN_AUDIO_DURATION_SECONDS and index < 20:
+        source = dialogue_lines[index % len(dialogue_lines)]
+        speaker_id = fallback_speakers[index % len(fallback_speakers)] if index % 3 else source.get("speaker_id", "narrator")
+        dialogue_lines.insert(
+            min(len(dialogue_lines), index + 1),
+            {
+                "speaker_id": speaker_id,
+                "line": reactions[index % len(reactions)],
+                "emotion": source.get("emotion", "surprised"),
+            },
+        )
+        index += 1
+    return dialogue_lines
+
+
+def _estimate_dialogue_duration(dialogue_lines: list[dict], provider_name: str) -> float:
+    return round(sum(_estimate_line_duration(line.get("line", ""), provider_name) for line in dialogue_lines), 2)
+
+
+def _estimate_plain_text_duration(text: str, provider_name: str) -> float:
+    return len(_words(text)) / _speech_rate(provider_name)
+
+
+def _calibrate_plain_text(text: str, provider_name: str) -> tuple[str, dict]:
+    provider = _normalize_provider_name(provider_name)
+    estimated = _estimate_plain_text_duration(text, provider)
+    changed = False
+    action = "none"
+    words = _words(text)
+    if estimated > MAX_AUDIO_DURATION_SECONDS:
+        keep = max(12, int(len(words) * (TARGET_AUDIO_DURATION_SECONDS / estimated)))
+        text = _restore_sentence(words[:keep])
+        changed = True
+        action = "shortened"
+    elif estimated < MIN_AUDIO_DURATION_SECONDS:
+        expansions = [
+            "Nobody understood what was happening yet.",
+            "Then one small detail made the whole scene feel bigger.",
+            "Everyone paused because the answer was almost there.",
+            "The final clue changed everything.",
+        ]
+        index = 0
+        while _estimate_plain_text_duration(text, provider) < MIN_AUDIO_DURATION_SECONDS and index < 20:
+            text = f"{text.rstrip()} {expansions[index % len(expansions)]}"
+            index += 1
+        changed = True
+        action = "expanded"
+    calibrated_estimate = _estimate_plain_text_duration(text, provider)
+    return text, {
+        "changed": changed,
+        "action": action,
+        "provider": provider,
+        "speech_rate_words_per_second": _speech_rate(provider),
+        "estimated_before": round(estimated, 2),
+        "estimated_duration": round(calibrated_estimate, 2),
+    }
+
+
+def _estimate_line_duration(text: str, provider_name: str) -> float:
+    return max(0.55, len(_words(text)) / _speech_rate(provider_name) + 0.15)
+
+
+def _speech_rate(provider_name: str) -> float:
+    return PROVIDER_WORDS_PER_SECOND.get(_normalize_provider_name(provider_name), 3.1)
+
+
+def _normalize_provider_name(provider_name: str) -> str:
+    provider = (provider_name or "mock").split(",", 1)[0].lower()
+    if provider in {"google", "google_ai"}:
+        return "google_ai_studio"
+    return provider
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[A-Za-z0-9']+", text or "")
+
+
+def _restore_sentence(words: list[str]) -> str:
+    if not words:
+        return "Wait."
+    sentence = " ".join(words)
+    return sentence if sentence.endswith((".", "!", "?")) else f"{sentence}."
+
+
+def _format_dialogue_script(dialogue_lines: list[dict]) -> str:
+    return "\n".join(f"{str(line.get('speaker_id', 'narrator')).upper()}: {line.get('line', '').strip()}" for line in dialogue_lines)
+
+
+def _write_dialogue_captions(video_dir: Path, dialogue_lines: list[dict], duration: float) -> None:
+    captions = []
+    current = 0.0
+    for line in dialogue_lines:
+        words = _words(line.get("line", ""))
+        if not words:
+            continue
+        line_duration = max(0.55, _estimate_line_duration(line.get("line", ""), "mock"))
+        step = line_duration / max(len(words), 1)
+        speaker = str(line.get("speaker_id", "narrator")).upper()
+        for index, word in enumerate(words):
+            captions.append(
+                {
+                    "speaker_id": line.get("speaker_id", "narrator"),
+                    "speaker": speaker,
+                    "word": word.upper(),
+                    "start": round(current + (index * step), 2),
+                    "end": round(current + ((index + 1) * step), 2),
+                }
+            )
+        current += line_duration
+    (video_dir / "captions.json").write_text(json.dumps(captions, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _duration_in_range(duration: float) -> bool:
+    return MIN_AUDIO_DURATION_SECONDS <= duration <= MAX_AUDIO_DURATION_SECONDS
+
+
+def _mixed_audio_duration(video_dir: Path, output_path: Path, clips: list[dict], provider_name: str) -> float | None:
+    total = 0.0
+    for clip in clips:
+        clip_path = video_dir / clip["file"]
+        total += _audio_duration_seconds(clip_path) or _estimate_line_duration(clip.get("line", ""), provider_name)
+    duration = _audio_duration_seconds(output_path)
+    if duration and (not total or duration >= total * 0.8):
+        return duration
+    return round(total, 2) if total else None
+
+
+def _audio_duration_seconds(path: Path) -> float | None:
+    if not path.exists():
+        return None
+    try:
+        with wave.open(str(path), "rb") as wav:
+            frames = wav.getnframes()
+            rate = wav.getframerate()
+            if rate:
+                return round(frames / float(rate), 2)
+    except (wave.Error, OSError):
+        pass
+    if shutil.which("ffprobe"):
+        completed = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if completed.returncode == 0:
+            try:
+                return round(float(completed.stdout.strip()), 2)
+            except ValueError:
+                return None
+    return None
+
+
 def _mix_audio_clips(clips: list[Path], output_path: Path) -> bool:
     clips = [clip for clip in clips if clip.exists()]
     if not clips:
         return False
     if shutil.which("ffmpeg"):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            list_path = Path(temp_dir) / "clips.txt"
-            list_path.write_text("".join(f"file '{str(clip).replace(chr(39), chr(39) + '\\\\' + chr(39) + chr(39))}'\n" for clip in clips), encoding="utf-8")
-            completed = subprocess.run(
-                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_path), "-c:a", "libmp3lame", "-b:a", "128k", str(output_path)],
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
-            if completed.returncode == 0 and output_path.exists():
-                return True
+        command = ["ffmpeg", "-y"]
+        for clip in clips:
+            command.extend(["-i", str(clip)])
+        command.extend(
+            [
+                "-filter_complex",
+                "".join(f"[{index}:a]" for index in range(len(clips))) + f"concat=n={len(clips)}:v=0:a=1[a]",
+                "-map",
+                "[a]",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "128k",
+                str(output_path),
+            ]
+        )
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=180)
+        if completed.returncode == 0 and output_path.exists():
+            return True
     with output_path.open("wb") as mixed:
         for clip in clips:
             mixed.write(clip.read_bytes())
@@ -796,17 +1066,35 @@ def _extract_inline_audio(response: dict) -> bytes | None:
     return None
 
 
-def _write_mock_audio(output_path: Path, text: str) -> None:
-    # WAV content is intentionally written to the requested file path so FFmpeg can
-    # still probe it even when the extension is .mp3.
-    seed = hashlib.sha256(text.encode("utf-8")).digest()
+def _write_mock_audio(output_path: Path, text: str, seed_text: str | None = None) -> None:
+    seed = hashlib.sha256((seed_text or text).encode("utf-8")).digest()
+    duration = min(35.0, max(0.55, _estimate_line_duration(text, "mock")))
+    frame_count = max(1, int(16000 * duration))
     frames = bytearray()
-    for index in range(16000):
+    for index in range(frame_count):
         byte = seed[index % len(seed)]
         sample = (byte - 128) * 6
         frames.extend(int(sample).to_bytes(2, byteorder="little", signed=True))
+    if shutil.which("ffmpeg"):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wav_path = Path(temp_dir) / "mock.wav"
+            _write_wav(wav_path, bytes(frames))
+            completed = subprocess.run(
+                ["ffmpeg", "-y", "-i", str(wav_path), "-codec:a", "libmp3lame", "-b:a", "128k", str(output_path)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if completed.returncode == 0 and output_path.exists():
+                return
+    # Fallback: WAV content is written to the requested path so local smoke tests
+    # can still run without FFmpeg.
+    _write_wav(output_path, bytes(frames))
+
+
+def _write_wav(output_path: Path, frames: bytes) -> None:
     with wave.open(str(output_path), "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(16000)
-        wav.writeframes(bytes(frames))
+        wav.writeframes(frames)

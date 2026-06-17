@@ -753,6 +753,8 @@ class AIMovieEngineV4Tests(unittest.TestCase):
                         "audio_matches_current_text": True,
                         "mixed_voiceover_ready": False,
                         "estimated_episode_duration": 30,
+                        "estimated_duration": 30,
+                        "actual_audio_duration": 30,
                         "dialogue_percentage": 75,
                         "dialogue_line_count": 20,
                         "speaker_count": 3,
@@ -767,6 +769,8 @@ class AIMovieEngineV4Tests(unittest.TestCase):
                         "audio_matches_current_text": True,
                         "mixed_voiceover_ready": True,
                         "estimated_episode_duration": 30,
+                        "estimated_duration": 30,
+                        "actual_audio_duration": 30,
                         "dialogue_percentage": 75,
                         "dialogue_line_count": 20,
                         "speaker_count": 3,
@@ -787,6 +791,7 @@ class AIMovieEngineV4Tests(unittest.TestCase):
         self.assertTrue(ready["requirements"]["line_count_20_plus"])
         self.assertEqual(quality_result["line_count"], 20)
         self.assertEqual(quality_result["estimated_duration"], 30)
+        self.assertEqual(quality_result["actual_audio_duration"], 30)
 
     def test_final_renderer_blocks_image_only_without_real_ai_video(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

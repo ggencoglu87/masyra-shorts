@@ -161,6 +161,39 @@ class TTSPipelineTests(unittest.TestCase):
         self.assertTrue(files_exist["mixed"])
         self.assertIn("bob_cat", result["voices_used"])
 
+    def test_multi_voice_audio_duration_is_calibrated_to_25_35_seconds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = Path(tmp) / "video"
+            video_dir.mkdir()
+            lines = []
+            speakers = ["NARRATOR", "BOB_CAT", "CARL_CHICKEN"]
+            for index in range(20):
+                speaker = speakers[index % len(speakers)]
+                lines.append(f"{speaker}: This moment became louder because everyone noticed the tiny clue on the table.")
+            (video_dir / "voiceover.txt").write_text("\n".join(lines), encoding="utf-8")
+            (video_dir / "character_bible.json").write_text(
+                json.dumps(
+                    {
+                        "narrator_voice_profile": {"voice_id": "narrator_main", "provider": "mock"},
+                        "characters": [
+                            {"id": "bob_cat", "voice_profile": {"voice_id": "bob_cat", "speaking_style": "dramatic"}},
+                            {"id": "carl_chicken", "voice_profile": {"voice_id": "carl_chicken", "speaking_style": "sarcastic"}},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = synthesize_voiceover(video_dir, provider_name="mock", force=True)
+            captions = json.loads((video_dir / "captions.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(result["created"])
+        self.assertGreaterEqual(result["actual_audio_duration"], 25)
+        self.assertLessEqual(result["actual_audio_duration"], 35)
+        self.assertIn("estimated_duration", result)
+        self.assertIn("duration_calibration", result)
+        self.assertFalse(any(":" in item.get("word", "") for item in captions))
+
 
 if __name__ == "__main__":
     unittest.main()
